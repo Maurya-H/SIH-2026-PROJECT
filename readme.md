@@ -174,30 +174,69 @@ SIH-2026-PROJECT/
 
 ## 🔑 Environment Variables
 
-Never commit real secrets. Copy the template and fill in local values:
+This project uses a `.env` file to store database credentials and config — so real passwords never get pushed to GitHub. `docker-compose.yml` and the backend both read from it.
+
+### First-time setup
+
+Copy the example file to create your own local `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Example `.env.example` (create this file at repo root if it doesn't exist yet):
+You don't need to change any values to get started — the defaults work out of the box.
+
+### What's inside `.env.example` (safe to commit — placeholders only)
 
 ```env
 # Database
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=changeme
 POSTGRES_DB=civic_tracker
-DATABASE_URL=postgresql://postgres:changeme@localhost:5432/civic_tracker
+POSTGRES_PORT=5432
 
 # Backend
-SECRET_KEY=replace_with_a_random_string
-ENV=development
+DATABASE_URL=postgresql://postgres:changeme@localhost:5432/civic_tracker
 
 # Frontend
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-Make sure `.env` is listed in `.gitignore` — only `.env.example` should ever be committed.
+⚠️ **Never commit your real `.env` file.** It's already listed in `.gitignore`. Only `.env.example` should ever be pushed to GitHub.
+
+### Where `.env` must live
+
+`.env` has to sit in the **project root** — the same folder as `docker-compose.yml`, not inside `backend/` or `frontend/`. Confirm with:
+
+```powershell
+dir -Force
+```
+
+You should see `.env` listed next to `docker-compose.yml`.
+
+### If Docker shows "variable is not set" warnings
+
+```
+level=warning msg="The \"POSTGRES_USER\" variable is not set. Defaulting to a blank string."
+```
+
+This means Compose can't find `.env` (wrong folder, or it doesn't exist yet). Run `cp .env.example .env` in the project root, then restart:
+
+```powershell
+docker compose down -v
+docker compose up -d
+```
+
+The `-v` flag also clears out any old database volume — useful if a previous run started with blank/wrong credentials and left behind an incompatible data directory.
+
+### Verifying it's wired correctly
+
+```powershell
+docker ps
+docker exec -it <container_name_from_docker_ps> psql -U postgres -d civic_tracker
+```
+
+If you land on a `civic_tracker=#` prompt, `.env` → `docker-compose.yml` → Postgres are all correctly connected. Type `\q` to exit.
 
 ---
 
@@ -350,6 +389,9 @@ __pycache__/
 | Frontend loads blank | Check browser console (`F12`) for errors; confirm backend is running |
 | Git: "commit your changes before switching branches" | `git status` to review; commit, or `git stash` to save temporarily |
 | Merge conflict | Don't delete code blindly — talk to the teammate who owns that section |
+| Docker: `"variable is not set. Defaulting to a blank string"` | `.env` is missing or in the wrong folder. It must be in the project root, next to `docker-compose.yml`. Run `cp .env.example .env` if it doesn't exist yet, then `docker compose down -v` → `docker compose up -d` |
+| Docker: `"database files are incompatible with server"` | Leftover volume from an older Postgres version. Safe to wipe since there's no real data yet: `docker compose down -v` then `docker compose up -d` |
+| `docker exec ... container is not running` | The container crashed after starting — check why with `docker compose logs db` before retrying |
 
 ---
 
