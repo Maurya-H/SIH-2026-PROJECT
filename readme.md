@@ -1,285 +1,271 @@
-SIH 2026 — Civic Issue Tracker 🚧
+# 🚧 Civic Issue Tracker — SIH 2026
 
-A smart civic issue reporting platform where citizens can report problems like:
+A smart civic issue reporting and prioritization platform. Citizens report problems on a map; officers view, zone, and triage them using a data-driven **Issue Priority Index (IPI)**.
 
-🚧 Potholes
-💧 Waterlogging
-🌳 Fallen trees
-🛣️ Road damage
-🏙️ Other civic issues
+> 🚧 Potholes · 💧 Waterlogging · 🌳 Fallen Trees · 🛣️ Road Damage · 🏙️ Other Civic Issues
 
-Officers can view reported issues on a map, create zones, and use an Issue Priority Index (IPI) to decide which issues need attention first.
+---
 
-🧰 Tech Stack
-Part	Technology	What it does
-Frontend	React + Tailwind CSS + Leaflet	Website, dashboard and maps
-Backend	FastAPI + Python	APIs and application logic
-Spatial Processing	PostGIS + H3	Location-based operations and spatial indexing
-Database	PostgreSQL	Stores application data
-Database Environment	Docker	Runs PostgreSQL + PostGIS
-Code Management	GitHub	Stores and manages the project
-👥 Team
+## 📑 Table of Contents
 
-We have 6 members divided into 3 teams.
+1. [Overview](#-overview)
+2. [Tech Stack](#-tech-stack)
+3. [Team & Responsibilities](#-team--responsibilities)
+4. [Architecture](#-architecture)
+5. [Issue Priority Index (IPI)](#-issue-priority-index-ipi)
+6. [Prerequisites](#-prerequisites)
+7. [Getting the Project](#-getting-the-project)
+8. [Project Structure](#-project-structure)
+9. [Environment Variables](#-environment-variables)
+10. [Running the Project](#-running-the-project)
+11. [API Overview](#-api-overview)
+12. [Git & Branching Workflow](#-git--branching-workflow)
+13. [Pull Requests](#-pull-requests)
+14. [Repository Privacy & Secrets](#-repository-privacy--secrets)
+15. [Troubleshooting](#-troubleshooting)
+16. [Team Rules](#-team-rules)
+17. [Roadmap](#-roadmap)
 
-Team	Members	Main Work
-Frontend	F1 + F2	React, Tailwind, Leaflet, UI, dashboard, maps
-Backend	B1 + B2	FastAPI, APIs, PostGIS, H3, spatial queries, IPI
-Database	D1 + D2	PostgreSQL, database schema, tables, relationships, indexes, migrations, seed data
-How Backend and Database work together
+---
 
-PostGIS is a PostgreSQL extension, but in our project the Backend team will use PostGIS for spatial operations.
+## 🧭 Overview
 
-Frontend
-   ↓
-FastAPI Backend
-   ↓
-PostGIS / H3
-   ↓
-PostgreSQL Database
+Citizens report civic issues with a photo, location, and category through a simple web form. Officers see all issues on a map, group them into **zones**, and use the **IPI score** to decide what to fix first — instead of relying on first-come-first-served or manual judgment.
 
-For example:
+**Core value proposition for judges:** spatial intelligence (H3 + PostGIS) turns raw complaints into a ranked, zone-aware action list for municipal officers.
 
-Officer selects a zone → Backend sends a spatial query → PostGIS finds issues inside the zone → Backend processes the result → Frontend displays the issues.
+---
 
-💻 What You Need to Install
+## 🧰 Tech Stack
 
-Every team member should install:
+| Layer | Technology | Purpose |
+|---|---|---|
+| Frontend | React + Tailwind CSS + Leaflet | Citizen form, officer dashboard, maps |
+| Backend | FastAPI (Python) | REST APIs, business logic, IPI calculation |
+| Spatial Processing | PostGIS + H3 | Zones, spatial queries, hexagonal indexing |
+| Database | PostgreSQL | Persistent storage |
+| Database Environment | Docker Compose | Runs PostgreSQL + PostGIS locally |
+| Version Control | GitHub | Source control & collaboration |
 
-1. VS Code
+---
 
-Used for writing and editing code.
+## 👥 Team & Responsibilities
 
-Download VS Code
+| Team | Members | Primary Folder | Responsibilities |
+|---|---|---|---|
+| Frontend | F1, F2 | `frontend/` | Citizen form, officer dashboard, maps, UI/UX, charts |
+| Backend | B1, B2 | `backend/` | FastAPI routes, PostGIS/H3 queries, IPI logic, auth |
+| Database | D1, D2 | `database/` | Schema, relationships, indexes, migrations, seed data |
 
-2. Python 3.12+
+**Handoff chain:** D1/D2 design tables → B1/B2 write queries and APIs against them → F1/F2 consume the APIs and render results.
 
-Required for the FastAPI backend.
+---
 
-Download Python
+## 🏗️ Architecture
 
-3. Node.js LTS
+```
+Citizen/Officer Browser
+        │
+        ▼
+  React + Leaflet (Frontend)
+        │  REST calls
+        ▼
+   FastAPI (Backend)
+        │  spatial queries
+        ▼
+   PostGIS + H3 (inside PostgreSQL)
+        │
+        ▼
+    PostgreSQL (Database)
+```
 
-Required for the React frontend.
+**Example flow:** Officer selects a zone → Frontend calls `/zones/{id}/issues` → Backend builds a spatial query → PostGIS returns matching issues → Backend attaches IPI scores → Frontend renders pins + a sorted list.
 
-Download Node.js
+---
 
-4. Docker Desktop
+## 📊 Issue Priority Index (IPI)
 
-Used to run PostgreSQL + PostGIS.
+The IPI ranks issues so officers know what to act on first. Suggested starting formula (tune weights during development):
 
-Download Docker Desktop
+```
+IPI = (W1 × Severity) + (W2 × VoteCount) + (W3 × AgeInDays) + (W4 × ZoneDensity)
+```
 
-5. GitHub Desktop ⭐ Recommended
+| Factor | Meaning | Example Source |
+|---|---|---|
+| Severity | Category-based base risk (pothole vs. fallen tree) | Set per category |
+| VoteCount | How many citizens confirmed/upvoted the same issue | `issue_votes` table |
+| AgeInDays | How long the issue has been open and unresolved | `created_at` |
+| ZoneDensity | How many other open issues exist in the same H3 cell/zone | H3 aggregation query |
 
-GitHub Desktop makes Git easier for beginners.
+Suggested defaults: `W1=0.4, W2=0.2, W3=0.2, W4=0.2` — Backend team should expose these as configurable constants, not hardcoded magic numbers, so they can be tuned without a redeploy.
 
-Download GitHub Desktop
+---
 
-❓ Do I Need Git?
-⭐ Recommended: GitHub Desktop
+## 💻 Prerequisites
 
-If you don't know Git commands, use GitHub Desktop.
+Every team member installs:
 
-You can do things like:
+| Tool | Why | Link |
+|---|---|---|
+| VS Code | Code editor | [Download](https://code.visualstudio.com/) |
+| Python 3.12+ | FastAPI backend | [Download](https://www.python.org/downloads/) |
+| Node.js LTS | React frontend | [Download](https://nodejs.org/) |
+| Docker Desktop | Runs PostgreSQL + PostGIS | [Download](https://www.docker.com/products/docker-desktop/) |
+| GitHub Desktop ⭐ recommended | Easier Git for beginners | [Download](https://desktop.github.com/) |
 
-Clone project
-      ↓
-Create branch
-      ↓
-Write code
-      ↓
-Commit
-      ↓
-Push
-      ↓
-Pull Request
+### Do I need Git command line?
 
-without typing most Git commands.
+- **Beginner-friendly:** use **GitHub Desktop** — clone, branch, commit, push, and PR without typing Git commands.
+- **Comfortable with a terminal:** install Git and use `git clone`, `git checkout`, `git add`, `git commit`, `git push`, `git pull`.
+- **Never** use "Download ZIP" for active development — it breaks version history and team sync. ZIP is fine only for a one-off look at the code.
 
-Alternative: Git Command Line
+---
 
-You can also install Git and use commands such as:
+## 📥 Getting the Project
 
-git clone
-git checkout
-git add
-git commit
-git push
-git pull
-⚠️ Download ZIP
+### Using GitHub Desktop
+1. Install GitHub Desktop and sign in with your GitHub account.
+2. `File → Clone Repository`
+3. Select `Maurya-H/SIH-2026-PROJECT`
+4. Choose a save location → `Clone`
+5. Open the cloned folder in VS Code.
 
-You can download the project using:
+### Using Git CLI
+```bash
+git clone https://github.com/Maurya-H/SIH-2026-PROJECT.git
+cd SIH-2026-PROJECT
+code .
+```
 
-GitHub → Code → Download ZIP
+---
 
-But do not use ZIP for regular team development.
+## 📁 Project Structure
 
-ZIP is okay if you only want to look at the project.
-
-For our 6-person team, use:
-
-GitHub Desktop or Git
-
-📥 Getting the Project
-Using GitHub Desktop
-Install GitHub Desktop.
-Sign in with your GitHub account.
-Open GitHub Desktop.
-Select:
-File → Clone Repository
-Select:
-Maurya-H/SIH-2026-PROJECT
-Choose where you want to save the project.
-Click Clone.
-
-Then open the project in VS Code.
-
-Open SIH-2026-PROJECT on GitHub
-
-📁 Project Structure
+```
 SIH-2026-PROJECT/
 │
-├── frontend/
-│   └── React application
+├── frontend/              # React application
+│   ├── src/
+│   │   ├── components/    # Reusable UI (forms, cards, charts)
+│   │   ├── pages/         # Citizen form, officer dashboard
+│   │   └── map/           # Leaflet map components
+│   └── package.json
 │
-├── backend/
-│   └── FastAPI application
+├── backend/                # FastAPI application
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── routers/        # /issues, /zones, /ipi, /auth
+│   │   ├── services/       # IPI calculation, spatial helpers
+│   │   └── models/         # Pydantic schemas
+│   └── requirements.txt
 │
-├── database/
-│   └── SQL schema and seed data
+├── database/                # SQL schema and seed data
+│   ├── migrations/
+│   └── seed/
 │
-├── docker-compose.yml
-│
+├── docker-compose.yml        # Starts PostgreSQL + PostGIS
+├── .env.example               # Template for local secrets (see below)
 ├── .gitignore
-│
 └── README.md
-frontend/
+```
 
-Contains everything users see:
+---
 
-Citizen Report Form
-Officer Dashboard
-Maps
-Issue Details
-Buttons
-Charts
-backend/
+## 🔑 Environment Variables
 
-Contains the application logic:
+Never commit real secrets. Copy the template and fill in local values:
 
-FastAPI
-APIs
-PostGIS
-H3
-Spatial Queries
-IPI Calculation
-Communication with Database
-database/
+```bash
+cp .env.example .env
+```
 
-Contains database-related work:
+Example `.env.example` (create this file at repo root if it doesn't exist yet):
 
-Tables
-Relationships
-Indexes
-Migrations
-Seed Data
-docker-compose.yml
+```env
+# Database
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=changeme
+POSTGRES_DB=civic_tracker
+DATABASE_URL=postgresql://postgres:changeme@localhost:5432/civic_tracker
 
-Used to start our database using Docker.
+# Backend
+SECRET_KEY=replace_with_a_random_string
+ENV=development
 
-🗄️ Step 1 — Start Database
+# Frontend
+VITE_API_BASE_URL=http://localhost:8000
+```
 
-Make sure Docker Desktop is open.
+Make sure `.env` is listed in `.gitignore` — only `.env.example` should ever be committed.
 
-Open a terminal in the project folder:
+---
 
+## ▶️ Running the Project
+
+### First-time setup
+
+**1. Database**
+```bash
 docker compose up -d
+docker ps          # confirm containers are running
+```
 
-This starts:
-
-PostgreSQL
-     +
-PostGIS
-
-Check that Docker is running:
-
-docker ps
-🐍 Step 2 — Start Backend
-
-Open a new terminal.
-
-Go to the backend:
-
+**2. Backend**
+```bash
 cd backend
-First time only
-
-Create a Python virtual environment:
-
 python -m venv venv
-
-Activate it:
-
-.\venv\Scripts\Activate.ps1
-
-Install the required packages:
-
+.\venv\Scripts\Activate.ps1     # Windows PowerShell
+# source venv/bin/activate      # macOS/Linux
 pip install -r requirements.txt
-
-Start FastAPI:
-
 uvicorn app.main:app --reload
+```
+Backend runs at `http://localhost:8000` (Swagger docs at `http://localhost:8000/docs`).
 
-The backend should be available at:
-
-http://localhost:8000
-⚛️ Step 3 — Start Frontend
-
-Open another new terminal.
-
-Go to the frontend:
-
+**3. Frontend**
+```bash
 cd frontend
-First time only
-
-Install packages:
-
 npm install
-
-Start the frontend:
-
 npm run dev
+```
+Frontend runs at `http://localhost:5173` (check terminal output for the actual port).
 
-For a Vite React project, the frontend is usually available at:
+### Every day after that
 
-http://localhost:5173
+| Terminal | Commands |
+|---|---|
+| 1 — Database | `docker compose up -d` |
+| 2 — Backend | `cd backend` → `.\venv\Scripts\Activate.ps1` → `uvicorn app.main:app --reload` |
+| 3 — Frontend | `cd frontend` → `npm run dev` |
 
-If the terminal shows a different URL, use the URL shown there.
+No need to reinstall dependencies each time — only when `requirements.txt` or `package.json` changes.
 
-🔄 Every Time You Work on the Project
+---
 
-You don't need to reinstall everything.
+## 🔌 API Overview
 
-Start the three parts:
+Suggested initial endpoint set (Backend team to finalize in `backend/app/routers/`):
 
-Terminal 1 — Database
-docker compose up -d
-Terminal 2 — Backend
-cd backend
-.\venv\Scripts\Activate.ps1
-uvicorn app.main:app --reload
-Terminal 3 — Frontend
-cd frontend
-npm run dev
-🌿 IMPORTANT — Branches
-🚫 Never work directly on main
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/issues` | Citizen submits a new issue (photo, location, category) |
+| `GET` | `/issues` | List issues, filterable by zone/category/status |
+| `GET` | `/issues/{id}` | Get single issue detail |
+| `PATCH` | `/issues/{id}/status` | Officer updates status (open/in-progress/resolved) |
+| `GET` | `/zones` | List defined zones |
+| `POST` | `/zones` | Officer creates a new zone (polygon) |
+| `GET` | `/zones/{id}/issues` | Issues inside a zone, sorted by IPI |
+| `GET` | `/ipi/{issue_id}` | Get computed IPI score/breakdown for an issue |
 
-main is the stable version of our project.
+Once endpoints stabilize, keep this table (or a linked `API.md` / the auto-generated `/docs` page) as the source of truth so Frontend isn't guessing at contracts.
 
-Every member should create their own branch.
+---
 
-Example:
+## 🌿 Git & Branching Workflow
 
+**🚫 Never commit directly to `main`.** It must always stay stable and demo-ready.
+
+```
 main
 │
 ├── feature/frontend-citizen-form
@@ -288,334 +274,135 @@ main
 ├── feature/backend-spatial
 ├── feature/database-schema
 └── feature/database-seed
-🌱 Creating Your Branch
-GitHub Desktop
-Open GitHub Desktop.
-Select the project.
-Click Current Branch.
-Click New Branch.
-Give your branch a meaningful name.
+```
 
-Examples:
+### Creating a branch
 
-feature/frontend-citizen-form
-feature/frontend-dashboard
+**GitHub Desktop:** `Current Branch → New Branch` → name it → `Create Branch`
 
-feature/backend-api
-feature/backend-spatial
-
-feature/database-schema
-feature/database-seed
-Click Create Branch.
-
-Now you can work safely without directly changing main.
-
-💻 If You Use Git Commands
-
-First update main:
-
+**Git CLI:**
+```bash
 git checkout main
 git pull origin main
-
-Create your branch:
-
 git checkout -b feature/your-branch-name
+git branch          # confirms your active branch with a *
+```
 
-Check your branch:
+### Saving work
 
-git branch
+**GitHub Desktop:** review changed files → write a commit message (e.g. `Add citizen issue form`) → `Commit` → `Push origin`
 
-You should see:
-
-* feature/your-branch-name
-  main
-
-The * shows your current branch.
-
-💾 Saving Your Work
-GitHub Desktop ⭐
-
-After coding:
-
-Save your files.
-Open GitHub Desktop.
-Check the changed files.
-Enter a commit message.
-
-Example:
-
-Add citizen issue form
-Click Commit.
-Click Push origin.
-Git Commands
-
-Check changes:
-
+**Git CLI:**
+```bash
 git status
-
-Add changes:
-
 git add .
-
-Commit:
-
 git commit -m "Add citizen issue form"
-
-Push:
-
 git push origin feature/your-branch-name
-🔀 Pull Request
+```
 
-A Pull Request (PR) means:
+### Syncing after a merge
 
-"I finished my work. Please check it before adding it to the main project."
-
-The workflow is:
-
-Your Branch
-     ↓
-   Push
-     ↓
-  GitHub
-     ↓
-Pull Request
-     ↓
-Review
-     ↓
-Merge
-     ↓
-  main
-🔎 Creating a Pull Request
-
-Go to our GitHub repository:
-
-SIH-2026-PROJECT
-
-Then:
-
-Click Pull requests.
-Click New pull request.
-Select your branch.
-Make sure:
-your-branch → main
-Add a clear title.
-
-Example:
-
-Add citizen issue reporting form
-Explain what you changed.
-Create the Pull Request.
-Ask a teammate to review it.
-Merge it when it is ready.
-🔄 After Someone Merges Code
-
-Suppose F1 finishes a feature and merges it into main.
-
-Your computer does not automatically receive the new code.
-
-Before starting new work, update your project.
-
-Using Git:
-
+Merged code on GitHub does **not** appear on your machine automatically:
+```bash
 git checkout main
 git pull origin main
+git checkout -b feature/your-next-feature
+```
 
-Then create your next branch:
+---
 
-git checkout -b feature/your-new-feature
-🧑‍💻 Team Workflow
-Frontend — F1 + F2
+## 🔀 Pull Requests
 
-Mainly work inside:
+A PR = "my work is done, please review before merging into `main`."
 
-frontend/
+1. Go to the repo → **Pull requests → New pull request**
+2. Base: `main` ← Compare: `your-branch`
+3. Add a clear title (e.g. `Add citizen issue reporting form`) and describe what changed
+4. Request a review from a teammate
+5. Merge once approved
 
-Technologies:
+---
 
-React
-Tailwind CSS
-Leaflet
+## 🔐 Repository Privacy & Secrets
 
-Work examples:
+- Keep the repo **Private** during development; add all 6 members as collaborators.
+- **Never commit:** `.env`, passwords, API keys, database credentials.
+- Confirm these are in `.gitignore` before your first push:
 
-Citizen form
-Officer dashboard
-Maps
-UI
-Issue display
-Backend — B1 + B2
-
-Mainly work inside:
-
-backend/
-
-Technologies:
-
-FastAPI
-Python
-PostGIS
-H3
-
-Work examples:
-
-APIs
-Spatial queries
-H3 indexing
-IPI calculation
-Business logic
-Database — D1 + D2
-
-Mainly work inside:
-
-database/
-
-Technologies:
-
-PostgreSQL
-PostGIS configuration
-SQL
-
-Work examples:
-
-Tables
-Relationships
-Indexes
-Migrations
-Seed data
-Database structure
-Important
-
-Backend and Database teams will work together.
-
-For example:
-
-D1/D2
-   ↓
-Design database tables
-   ↓
-B1/B2
-   ↓
-Write FastAPI + PostGIS queries
-   ↓
-Frontend
-   ↓
-Display results
-🔐 Repository Privacy
-
-Keep the repository Private while developing the SIH project.
-
-Add all 6 team members as collaborators.
-
-Never upload:
-
+```gitignore
 .env
-Passwords
-API keys
-Secret keys
-Database passwords
+venv/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+```
 
-Make sure these are included in .gitignore.
+---
 
-🚨 Common Problems
-"docker compose" is not recognized
+## 🚨 Troubleshooting
 
-Make sure Docker Desktop is installed and running.
+| Problem | Fix |
+|---|---|
+| `docker compose` not recognized | Install and open Docker Desktop first |
+| Backend: `ModuleNotFoundError` | Activate venv (`.\venv\Scripts\Activate.ps1`) then `pip install -r requirements.txt` |
+| `npm` not recognized | Install Node.js LTS, restart terminal/VS Code |
+| Frontend loads blank | Check browser console (`F12`) for errors; confirm backend is running |
+| Git: "commit your changes before switching branches" | `git status` to review; commit, or `git stash` to save temporarily |
+| Merge conflict | Don't delete code blindly — talk to the teammate who owns that section |
 
-Backend says module not found
+---
 
-Activate the virtual environment:
+## ⭐ Team Rules
 
-.\venv\Scripts\Activate.ps1
+1. Never code directly on `main`.
+2. Always work on your own feature branch.
+3. Pull the latest `main` before starting new work.
+4. Make small, meaningful commits with clear messages.
+5. Test your work locally before opening a PR.
+6. Don't modify another team's files without discussing it first.
+7. Never commit passwords, keys, or `.env` files.
+8. Merge into `main` only through a reviewed Pull Request.
+9. On merge conflicts, ask the relevant teammate — don't guess.
+10. Keep `main` stable and demo-ready at all times.
 
-Then:
+---
 
-pip install -r requirements.txt
-npm is not recognized
+## 🗺️ Roadmap
 
-Install Node.js LTS and restart your terminal/VS Code.
+- [ ] Finalize database schema (issues, zones, votes, users)
+- [ ] Citizen issue submission form + photo upload
+- [ ] Officer map dashboard with Leaflet
+- [ ] Zone creation (draw polygon → store in PostGIS)
+- [ ] H3 indexing for issue density
+- [ ] IPI calculation endpoint + tunable weights
+- [ ] Officer status updates (open → in-progress → resolved)
+- [ ] Basic auth for officer login
+- [ ] Deployment plan for demo day
+- [ ] Prepare pitch: problem, demo flow, impact metrics
 
-Frontend is blank
+---
 
-Open:
+## 🎯 Final Architecture
 
-F12 → Console
+```
+                    CIVIC ISSUE TRACKER
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+          FRONTEND                     BACKEND
+          F1 + F2                      B1 + B2
+     React + Leaflet               FastAPI + Python
+       + Tailwind CSS                     │
+              │                  ┌────────┴────────┐
+              │                PostGIS             H3
+              │                  │                  │
+              └──────────────────┼──────────────────┘
+                                 ▼
+                            PostgreSQL
+                                 │
+                          DATABASE TEAM
+                              D1 + D2
+```
 
-Check for errors.
-
-Also make sure the backend is running.
-
-Git says:
-Please commit your changes before switching branches
-
-Check:
-
-git status
-
-If you want to keep your changes, commit them.
-
-If you want to temporarily save them:
-
-git stash
-🚀 Complete Daily Workflow
-1. Open Docker Desktop
-          ↓
-2. Open GitHub Desktop
-          ↓
-3. Get latest project changes
-          ↓
-4. Create/use your own branch
-          ↓
-5. Open project in VS Code
-          ↓
-6. Start Database
-          ↓
-7. Start Backend
-          ↓
-8. Start Frontend
-          ↓
-9. Write your code
-          ↓
-10. Test your work
-          ↓
-11. Commit
-          ↓
-12. Push your branch
-          ↓
-13. Create Pull Request
-          ↓
-14. Review
-          ↓
-15. Merge into main
-⭐ Team Rules
-Never directly code on main.
-Always work on your own branch.
-Pull the latest code before starting new work.
-Make small, meaningful commits.
-Test your code before creating a PR.
-Don't modify another team's work without discussing it.
-Never upload passwords or API keys.
-Use Pull Requests to merge into main.
-If you get a merge conflict, don't randomly delete code — ask the relevant teammate.
-Keep main stable and working.
-🎯 Our Final Architecture
-                         CIVIC ISSUE TRACKER
-                                  │
-                    ┌─────────────┴─────────────┐
-                    │                           │
-                 FRONTEND                    BACKEND
-                 F1 + F2                    B1 + B2
-                    │                           │
-              React + Leaflet             FastAPI + Python
-              Tailwind CSS                    │
-                    │                    ┌─────┴─────┐
-                    │                    │           │
-                    │                 PostGIS       H3
-                    │                    │           │
-                    └────────────────────┼───────────┘
-                                         ↓
-                                  PostgreSQL
-                                         │
-                                  DATABASE TEAM
-                                      D1 + D2
-
-Everyone works on their own branch → pushes their work → creates a Pull Request → reviews → merges into main.
+Everyone works on their own branch → pushes → opens a Pull Request → gets reviewed → merges into `main`.
