@@ -1,76 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import * as h3 from 'h3-js'
 import api from '../api'
 import 'leaflet/dist/leaflet.css'
 
-const DEFAULT_CENTER = [26.955, 81.096]
+const LUCKNOW_CENTER = [26.8467, 80.9462]
+const DEFAULT_ZOOM = 12
 
-const DISTRICTS = [
-  { name: 'Lucknow', center: [26.8467, 80.9462] },
-  { name: 'Kanpur Nagar', center: [26.4499, 80.3319] },
-  { name: 'Varanasi', center: [25.3176, 82.9739] },
-  { name: 'Prayagraj', center: [25.4358, 81.8463] },
-  { name: 'Agra', center: [27.1767, 78.0081] },
-  { name: 'Gorakhpur', center: [26.7606, 83.3732] },
+const LUCKNOW_NAGAR_PALIKA_FALLBACK = [
+  { name: 'Lucknow Nagar Nigam', center: [26.8467, 80.9462] },
+  { name: 'Bakshi Ka Talab', center: [26.98333, 80.88333] },
+  { name: 'Banthra', center: [26.693327, 80.834622] },
+  { name: 'Amethi', center: [26.76, 81.15] },
 ]
-
-const NAGAR_PALIKA_FALLBACK = {
-  Lucknow: [
-    { name: 'Lucknow Nagar Nigam', center: [26.8467, 80.9462] },
-    { name: 'Bakshi Ka Talab', center: [26.98333, 80.88333] },
-    { name: 'Banthra', center: [26.693327, 80.834622] },
-    { name: 'Amethi', center: [26.76, 81.15] },
-  ],
-  'Kanpur Nagar': [
-    { name: 'Kanpur Nagar Nigam', center: [26.4499, 80.3319] },
-    { name: 'Ghatampur', center: [26.17, 80.17] },
-    { name: 'Bilhaur', center: [26.85, 80.08] },
-    { name: 'Shivrajpur', center: [26.85722, 79.115] },
-    { name: 'Bithoor', center: [26.6127, 80.2719] },
-  ],
-  Varanasi: [
-    { name: 'Varanasi Nagar Nigam', center: [25.3176, 82.9739] },
-    { name: 'Ramnagar', center: [25.28, 83.03] },
-    { name: 'Gangapur', center: [25.459835, 82.878195] },
-  ],
-  Prayagraj: [
-    { name: 'Prayagraj Nagar Nigam', center: [25.4358, 81.8463] },
-    { name: 'Sirsa', center: [25.28, 82.08] },
-    { name: 'Lalgopalganj', center: [25.65, 81.617] },
-    { name: 'Phulpur', center: [25.55, 82.1] },
-    { name: 'Shankargarh', center: [25.183, 81.617] },
-    { name: 'Koraon', center: [25.008, 82.068] },
-    { name: 'Handia', center: [25.38, 82.18] },
-    { name: 'Bharatganj', center: [25.11972, 82.27389] },
-    { name: 'Mauaima', center: [25.7, 81.917] },
-  ],
-  Agra: [
-    { name: 'Agra Nagar Nigam', center: [27.1767, 78.0081] },
-    { name: 'Fatehpur Sikri', center: [27.091, 77.661] },
-    { name: 'Shamsabad', center: [27.02, 78.13] },
-    { name: 'Etmadpur', center: [27.235, 78.198] },
-    { name: 'Bah', center: [26.52, 78.35] },
-    { name: 'Achhnera', center: [27.18, 77.77] },
-    { name: 'Pinahat', center: [26.88, 78.38] },
-    { name: 'Fatehabad', center: [27.1, 78.19] },
-    { name: 'Kirawali', center: [27.15, 77.78] },
-    { name: 'Kheragarh', center: [26.933, 77.817] },
-    { name: 'Jagner', center: [26.86293, 77.60167] },
-  ],
-  Gorakhpur: [
-    { name: 'Gorakhpur Nagar Nigam', center: [26.7606, 83.3732] },
-    { name: 'Bansgaon', center: [26.567, 83.35] },
-    { name: 'Pipiganj', center: [26.93111, 83.29889] },
-    { name: 'Pipraich', center: [26.83, 83.53] },
-    { name: 'Gola Bazar', center: [26.34722, 83.35417] },
-    { name: 'Mundera Bazar', center: [26.649, 83.594] },
-    { name: 'Sahjanwa', center: [26.7636, 83.2161] },
-    { name: 'Barhalganj', center: [26.283, 83.5] },
-    { name: 'Campierganj', center: [27.0290, 83.2668] },
-  ],
-}
 
 const CATEGORY_COLORS = {
   waterlogging: '#3B82F6',
@@ -92,22 +35,35 @@ const CATEGORY_WEIGHTS = {
   other: 1.0,
 }
 
-// Stamp shapes offered in the toolbar. Centralized so the buttons, the
-// active-state check, and the label all come from one place.
-const STAMP_SHAPES = [
-  { rings: 0, icon: '🔷', label: '1 Hex' },
-  { rings: 1, icon: '🐝', label: '7-Hex Honeycomb' },
-  { rings: 2, icon: '🌐', label: '19-Hex Cluster' },
+const STATUS_META = {
+  pending: { label: 'Pending', color: '#F59E0B', bg: '#FEF3C7', next: 'in_progress', nextLabel: 'Mark In Progress' },
+  in_progress: { label: 'In Progress', color: '#2563EB', bg: '#DBEAFE', next: 'resolved', nextLabel: 'Mark Resolved' },
+  resolved: { label: 'Resolved', color: '#16A34A', bg: '#DCFCE7', next: null, nextLabel: null },
+}
+
+const getStatusMeta = (status) => STATUS_META[status] || { label: status || 'Unknown', color: '#6B7280', bg: '#F3F4F6', next: null, nextLabel: null }
+
+// H3 cell area at resolution 8 (~km²), used for rough zone-size estimates in the UI.
+const H3_RES8_CELL_AREA_KM2 = 0.73
+
+// Number of cells in a k-ring disk: 1 + 3k(k+1)
+const cellsInDisk = (k) => 1 + 3 * k * (k + 1)
+
+// Brush presets for the "Draw Zone" tool. `k` is the h3 gridDisk radius.
+const BRUSH_OPTIONS = [
+  { id: 'small', label: 'S', k: 0 },
+  { id: 'medium', label: 'M', k: 1 },
+  { id: 'large', label: 'L', k: 2 },
 ]
 
-// Universal H3 compatibility wrappers (supports h3-js v3 & v4)
+// Universal H3 compatibility wrappers
 const getH3Cell = (lat, lng, res = 8) => {
   if (typeof h3.latlngToCell === 'function') return h3.latlngToCell(lat, lng, res)
   if (typeof h3.geoToH3 === 'function') return h3.geoToH3(lat, lng, res)
   return null
 }
 
-const getH3Disk = (cell, k) => {
+const getH3Disk = (cell, k = 1) => {
   if (typeof h3.gridDisk === 'function') return h3.gridDisk(cell, k)
   if (typeof h3.kRing === 'function') return h3.kRing(cell, k)
   return [cell]
@@ -117,6 +73,21 @@ const getH3Boundary = (cell) => {
   if (typeof h3.cellToBoundary === 'function') return h3.cellToBoundary(cell)
   if (typeof h3.h3ToGeoBoundary === 'function') return h3.h3ToGeoBoundary(cell)
   return []
+}
+
+// Strict [lat, lng] boundary array formatting for Leaflet
+const getH3BoundaryFormatted = (cell) => {
+  try {
+    const boundary = getH3Boundary(cell)
+    if (!boundary || !boundary.length) return []
+    return boundary.map((coord) => {
+      const [first, second] = coord
+      return Math.abs(first) <= 90 ? [first, second] : [second, first]
+    })
+  } catch (err) {
+    console.error('H3 boundary formatting error:', err)
+    return []
+  }
 }
 
 const polygonToH3Cells = (coords, res = 8) => {
@@ -134,50 +105,62 @@ function coloredIcon(color) {
   })
 }
 
-// Live Shape Stamp Tool (Hover preview + single click placement).
-// Preview is now outline-only (no fill) so it can never be mistaken for
-// a placed zone, which is filled solid.
-function ShapeStampTool({ active, kRings, onPlaceShape }) {
-  const [previewHexes, setPreviewHexes] = useState([])
+// Click-to-paint hex zone tool. A click adds the brush-sized disk of cells
+// under the cursor to the zone, or removes it if those cells are already
+// fully selected (additive/subtractive painting). Mouse movement drives a
+// live preview of what the next click will do.
+function HexZoneClickTool({ active, brushK, onToggleShape, onHoverCellChange }) {
+  const lastHoverRef = useRef(null)
 
-  useMapEvents({
-    mousemove(e) {
-      if (!active) return
-      try {
-        const cell = getH3Cell(e.latlng.lat, e.latlng.lng, 8)
-        if (cell) setPreviewHexes(getH3Disk(cell, kRings))
-      } catch (err) {
-        console.error('Hover preview error:', err)
-      }
-    },
+  const map = useMapEvents({
     click(e) {
       if (!active) return
       try {
         const cell = getH3Cell(e.latlng.lat, e.latlng.lng, 8)
-        if (cell) onPlaceShape(getH3Disk(cell, kRings), [e.latlng.lat, e.latlng.lng])
+        if (!cell) return
+        const hexes = getH3Disk(cell, brushK)
+        onToggleShape(hexes, [e.latlng.lat, e.latlng.lng])
       } catch (err) {
-        console.error('Shape placement error:', err)
+        console.error('Error placing hex zone:', err)
       }
+    },
+    mousemove(e) {
+      if (!active) return
+      const cell = getH3Cell(e.latlng.lat, e.latlng.lng, 8)
+      if (!cell || cell === lastHoverRef.current) return
+      lastHoverRef.current = cell
+      onHoverCellChange(cell)
+    },
+    mouseout() {
+      if (!active) return
+      lastHoverRef.current = null
+      onHoverCellChange(null)
     },
   })
 
-  if (!active || previewHexes.length === 0) return null
+  // Cursor styling switch
+  useEffect(() => {
+    if (!map) return
+    const container = map.getContainer()
+    if (active) {
+      container.style.cursor = 'crosshair'
+    } else {
+      container.style.cursor = ''
+    }
+  }, [active, map])
 
-  return previewHexes.map((cell) => (
-    <Polygon
-      key={`preview-${cell}`}
-      positions={getH3Boundary(cell)}
-      pathOptions={{
-        color: '#F59E0B',
-        weight: 2,
-        fillOpacity: 0,
-        dashArray: '4, 4',
-      }}
-    />
-  ))
+  // Clear any stale hover preview the moment this tool becomes inactive.
+  useEffect(() => {
+    if (!active) {
+      lastHoverRef.current = null
+      onHoverCellChange(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
+
+  return null
 }
 
-// Multi-click polygon drawer (Advanced / freeform mode)
 function PolygonDrawer({ active, points, setPoints }) {
   useMapEvents({
     click(e) {
@@ -190,24 +173,123 @@ function PolygonDrawer({ active, points, setPoints }) {
   ) : null
 }
 
-// Placed H3 Hexagonal Grid Overlay. `justPlaced` briefly boosts the
-// fill opacity right after a stamp click so placement is unmistakable.
 function H3Overlay({ hexCells, justPlaced }) {
   if (!hexCells || hexCells.length === 0) return null
 
-  return hexCells.map((cell) => (
-    <Polygon
-      key={cell}
-      positions={getH3Boundary(cell)}
-      pathOptions={{
-        color: '#DC2626',
-        weight: 1.5,
-        fillColor: '#EF4444',
-        fillOpacity: justPlaced ? 0.7 : 0.35,
-      }}
-      className="h3-cell-transition"
-    />
-  ))
+  return hexCells.map((cell) => {
+    const positions = getH3BoundaryFormatted(cell)
+    if (!positions || positions.length === 0) return null
+
+    return (
+      <Polygon
+        key={`placed-${cell}`}
+        positions={positions}
+        pathOptions={{
+          color: '#DC2626',
+          weight: 1.5,
+          fillColor: '#EF4444',
+          fillOpacity: justPlaced ? 0.7 : 0.35,
+          interactive: false, // Disables pointer events on polygons to prevent click interception
+        }}
+      />
+    )
+  })
+}
+
+// Live preview of what the next click will do: amber dashed = will add these
+// cells, red dashed = these cells are already selected and will be removed.
+function HoverPreviewOverlay({ cells, willRemove }) {
+  if (!cells || cells.length === 0) return null
+  const color = willRemove ? '#DC2626' : '#F59E0B'
+
+  return cells.map((cell) => {
+    const positions = getH3BoundaryFormatted(cell)
+    if (!positions || positions.length === 0) return null
+
+    return (
+      <Polygon
+        key={`hover-${cell}`}
+        positions={positions}
+        pathOptions={{
+          color,
+          weight: 1,
+          dashArray: '3, 3',
+          fillColor: color,
+          fillOpacity: 0.12,
+          interactive: false,
+        }}
+      />
+    )
+  })
+}
+
+function IncidentReportsPanel({ incidents, selectedId, onSelect, onAdvanceStatus, updatingId }) {
+  return (
+    <div className="w-full md:w-[340px] shrink-0 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col" style={{ minHeight: '540px', maxHeight: '540px' }}>
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+        <h3 className="text-sm font-bold text-slate-900">Incident Reports</h3>
+        <span className="text-[11px] text-slate-400 font-medium">{incidents.length} total</span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+        {incidents.length === 0 && (
+          <p className="text-xs text-slate-400 text-center py-8 px-4">No incident reports for this area yet.</p>
+        )}
+
+        {incidents.map((incident) => {
+          const meta = getStatusMeta(incident.status)
+          const isSelected = incident.id === selectedId
+          const isUpdating = incident.id === updatingId
+
+          return (
+            <div
+              key={incident.id}
+              onClick={() => onSelect(incident)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') onSelect(incident)
+              }}
+              className={`w-full text-left px-4 py-3 transition-colors cursor-pointer ${isSelected ? 'bg-amber-50' : 'hover:bg-slate-50'}`}
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: CATEGORY_COLORS[incident.category] || '#9CA3AF' }}
+                  />
+                  <span className="text-xs font-semibold text-slate-800 capitalize truncate">
+                    {(incident.category || 'other').replace('_', ' ')}
+                  </span>
+                </div>
+                <span
+                  className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
+                  style={{ color: meta.color, backgroundColor: meta.bg }}
+                >
+                  {meta.label}
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-500 line-clamp-2 mb-2">{incident.description}</p>
+
+              {meta.next && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onAdvanceStatus(incident.id, meta.next)
+                  }}
+                  disabled={isUpdating}
+                  className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50 transition-colors"
+                >
+                  {isUpdating ? 'Updating…' : meta.nextLabel}
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 function MapRecenter({ focus }) {
@@ -222,39 +304,56 @@ function MapRecenter({ focus }) {
 function OfficerMapDashboard() {
   const [incidents, setIncidents] = useState([])
 
-  // Selection Modes: 'stamp' (honeycomb shape picker) vs 'polygon' (advanced free drawing)
-  const [selectionMode, setSelectionMode] = useState('stamp')
-  const [kRings, setKRings] = useState(1) // 0 = 1 Hex, 1 = 7-Hex Honeycomb, 2 = 19-Hex Cluster
+  const [selectionMode, setSelectionMode] = useState('drag')
   const [centerPoint, setCenterPoint] = useState(null)
   const [polygonPoints, setPolygonPoints] = useState([])
   const [hexCells, setHexCells] = useState([])
   const [justPlaced, setJustPlaced] = useState(false)
+
+  // Brush size for the click-to-paint drawing tool, plus undo history and
+  // the cell currently under the cursor (for the live preview).
+  const [brushK, setBrushK] = useState(1)
+  const [history, setHistory] = useState([])
+  const [hoverCell, setHoverCell] = useState(null)
 
   const [ipiResult, setIpiResult] = useState(null)
   const [affectedCount, setAffectedCount] = useState(null)
   const [loadingAffected, setLoadingAffected] = useState(false)
   const [status, setStatus] = useState('')
 
-  const [selectedDistrict, setSelectedDistrict] = useState('')
+  const [selectedIncidentId, setSelectedIncidentId] = useState(null)
+  const [updatingIncidentId, setUpdatingIncidentId] = useState(null)
+
   const [nagarPalikas, setNagarPalikas] = useState([])
   const [selectedNagarPalika, setSelectedNagarPalika] = useState('')
-  const [loadingPalikas, setLoadingPalikas] = useState(false)
+  const [loadingPalikas, setLoadingPalikas] = useState(true)
 
-  // Emergency SMS Broadcast States
   const [showSmsModal, setShowSmsModal] = useState(false)
   const [smsMessage, setSmsMessage] = useState('EMERGENCY ALERT: Severe incident reported in your area. Please stay safe and clear roads.')
   const [sendingSms, setSendingSms] = useState(false)
   const [smsResult, setSmsResult] = useState(null)
 
-  const districtCenter = DISTRICTS.find((d) => d.name === selectedDistrict)?.center
   const nagarPalikaCenter = nagarPalikas.find((np) => np.name === selectedNagarPalika)?.center
-  const mapFocus = nagarPalikaCenter
+  const selectedIncident = incidents.find((i) => i.id === selectedIncidentId)
+  const mapFocus = selectedIncident
+    ? { center: [selectedIncident.latitude, selectedIncident.longitude], zoom: 17 }
+    : nagarPalikaCenter
     ? { center: nagarPalikaCenter, zoom: 14 }
-    : districtCenter
-    ? { center: districtCenter, zoom: 12 }
-    : null
+    : { center: LUCKNOW_CENTER, zoom: DEFAULT_ZOOM }
 
-  // Auto-calculate H3 hexes in "Advanced" (freeform polygon) mode
+  // Fast membership checks for toggle logic + hover preview coloring.
+  const hexSet = useMemo(() => new Set(hexCells), [hexCells])
+
+  const hoverCells = useMemo(() => {
+    if (!hoverCell || selectionMode !== 'drag') return []
+    return getH3Disk(hoverCell, brushK)
+  }, [hoverCell, brushK, selectionMode])
+
+  const hoverWillRemove = useMemo(
+    () => hoverCells.length > 0 && hoverCells.every((c) => hexSet.has(c)),
+    [hoverCells, hexSet]
+  )
+
   useEffect(() => {
     if (selectionMode === 'polygon' && polygonPoints.length >= 3) {
       try {
@@ -277,20 +376,28 @@ function OfficerMapDashboard() {
   }, [polygonPoints, selectionMode])
 
   useEffect(() => {
+    setLoadingPalikas(true)
+    api
+      .get('/municipalities', { params: { district: 'Lucknow' } })
+      .then((res) => setNagarPalikas(res.data?.length ? res.data : LUCKNOW_NAGAR_PALIKA_FALLBACK))
+      .catch(() => {
+        setNagarPalikas(LUCKNOW_NAGAR_PALIKA_FALLBACK)
+        setStatus('Using offline nagar palika list — backend /municipalities unreachable.')
+      })
+      .finally(() => setLoadingPalikas(false))
+  }, [])
+
+  useEffect(() => {
     fetchIncidents()
-  }, [selectedDistrict, selectedNagarPalika]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedNagarPalika]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchIncidents = async () => {
     try {
       const focus = nagarPalikaCenter
         ? { center: nagarPalikaCenter, radiusKm: 6 }
-        : districtCenter
-        ? { center: districtCenter, radiusKm: 25 }
-        : null
+        : { center: LUCKNOW_CENTER, radiusKm: 25 }
 
-      const params = focus
-        ? { near_lat: focus.center[0], near_lng: focus.center[1], radius_km: focus.radiusKm }
-        : {}
+      const params = { near_lat: focus.center[0], near_lng: focus.center[1], radius_km: focus.radiusKm }
 
       const res = await api.get('/incidents/', { params })
       setIncidents(res.data)
@@ -299,42 +406,41 @@ function OfficerMapDashboard() {
     }
   }
 
-  useEffect(() => {
-    setSelectedNagarPalika('')
-    if (!selectedDistrict) {
-      setNagarPalikas([])
-      return
+  const advanceIncidentStatus = async (incidentId, nextStatus) => {
+    setUpdatingIncidentId(incidentId)
+    try {
+      await api.patch(`/incidents/${incidentId}`, { status: nextStatus })
+      setIncidents((prev) =>
+        prev.map((inc) => (inc.id === incidentId ? { ...inc, status: nextStatus } : inc))
+      )
+    } catch (err) {
+      setStatus('Failed to update incident status.')
+    } finally {
+      setUpdatingIncidentId(null)
     }
-    setLoadingPalikas(true)
-    api
-      .get('/municipalities', { params: { district: selectedDistrict } })
-      .then((res) => setNagarPalikas(res.data || []))
-      .catch(() => {
-        const fallback = NAGAR_PALIKA_FALLBACK[selectedDistrict] || []
-        setNagarPalikas(fallback)
-        if (fallback.length === 0) {
-          setStatus(`No nagar palika list available yet for ${selectedDistrict}.`)
-        }
-      })
-      .finally(() => setLoadingPalikas(false))
-  }, [selectedDistrict])
+  }
+
+  const handleSelectIncident = (incident) => {
+    setSelectedIncidentId((prev) => (prev === incident.id ? null : incident.id))
+  }
 
   const clearZone = () => {
     setCenterPoint(null)
     setPolygonPoints([])
     setHexCells([])
+    setHistory([])
+    setHoverCell(null)
     setIpiResult(null)
     setAffectedCount(null)
     setSmsResult(null)
     setStatus('')
   }
 
-  // Estimate how many registered residents fall inside the current zone.
-  // Mirrors the geospatial lookup /alert/hex-warning already does when it
-  // reports residents_found — just called earlier, before you commit to
-  // sending anything.
   const fetchAffectedCount = async (cells) => {
-    if (!cells || cells.length === 0) return
+    if (!cells || cells.length === 0) {
+      setAffectedCount(null)
+      return
+    }
     setLoadingAffected(true)
     try {
       const res = await api.post('/analytics/zone-residents', { h3_cells: cells })
@@ -346,13 +452,9 @@ function OfficerMapDashboard() {
     }
   }
 
-  // Single entry point for choosing a stamp shape. Always clears any
-  // leftover freeform/older stamp state first, so switching tools never
-  // leaves stale hexes behind.
-  const selectStamp = (rings) => {
+  const selectDragMode = () => {
     clearZone()
-    setSelectionMode('stamp')
-    setKRings(rings)
+    setSelectionMode('drag')
   }
 
   const selectFreeform = () => {
@@ -360,22 +462,45 @@ function OfficerMapDashboard() {
     setSelectionMode('polygon')
   }
 
-  const handlePlaceShape = (placedHexes, point) => {
-    setHexCells(placedHexes)
+  // Additive/subtractive painting: if the clicked brush disk is already
+  // fully selected, remove it; otherwise add it to the current zone.
+  const handleToggleShape = (hexes, point) => {
+    const nextSet = new Set(hexCells)
+    const allPresent = hexes.every((h) => nextSet.has(h))
+
+    if (allPresent) {
+      hexes.forEach((h) => nextSet.delete(h))
+    } else {
+      hexes.forEach((h) => nextSet.add(h))
+    }
+
+    const next = Array.from(nextSet)
+
+    setHistory((prev) => [...prev, hexCells])
+    setHexCells(next)
     setCenterPoint(point)
     setStatus('')
-    // brief "just placed" flash for unmistakable confirmation
     setJustPlaced(true)
     setTimeout(() => setJustPlaced(false), 350)
-    fetchAffectedCount(placedHexes)
+    fetchAffectedCount(next)
+  }
+
+  const undoLastAction = () => {
+    setHistory((prev) => {
+      if (prev.length === 0) return prev
+      const lastState = prev[prev.length - 1]
+      setHexCells(lastState)
+      fetchAffectedCount(lastState)
+      return prev.slice(0, -1)
+    })
   }
 
   const calculateScore = async () => {
     let coords = []
 
-    if (selectionMode === 'stamp') {
+    if (selectionMode === 'drag') {
       if (hexCells.length === 0) {
-        setStatus('Click on the map to stamp a hex shape first')
+        setStatus('Click on the map to draw a zone first')
         return
       }
       try {
@@ -424,36 +549,30 @@ function OfficerMapDashboard() {
     }
   }
 
-  const stampButtonClass = (rings) =>
-    `px-2.5 py-1.5 rounded-md font-medium transition-colors ${
-      selectionMode === 'stamp' && kRings === rings ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-300 hover:text-white'
-    }`
-
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       <header className="bg-slate-900 text-white border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-3">
+        <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
             </span>
             <span className="text-lg font-semibold tracking-tight">CivicTrack</span>
-            <span className="text-slate-400 text-sm ml-2">Officer Dashboard</span>
+            <span className="text-slate-400 text-sm ml-2">Officer Dashboard · Lucknow</span>
           </div>
 
-          {/* Shape Selector Bar */}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
-              {STAMP_SHAPES.map((shape) => (
-                <button
-                  key={shape.rings}
-                  onClick={() => selectStamp(shape.rings)}
-                  className={stampButtonClass(shape.rings)}
-                >
-                  {shape.icon} {shape.label}
-                </button>
-              ))}
+              <button
+                onClick={selectDragMode}
+                title="Click on the map to paint a hexagonal alert zone"
+                className={`px-2.5 py-1.5 rounded-md font-medium transition-colors ${
+                  selectionMode === 'drag' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                🎯 Draw Zone
+              </button>
               <span className="w-px h-4 bg-slate-600 mx-1" />
               <button
                 onClick={selectFreeform}
@@ -466,25 +585,32 @@ function OfficerMapDashboard() {
               </button>
             </div>
 
-            <select
-              value={selectedDistrict}
-              onChange={(e) => setSelectedDistrict(e.target.value)}
-              className="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-white border border-slate-700 focus:outline-none"
-            >
-              <option value="">All districts</option>
-              {DISTRICTS.map((d) => (
-                <option key={d.name} value={d.name}>{d.name}</option>
-              ))}
-            </select>
+            {selectionMode === 'drag' && (
+              <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
+                <span className="text-slate-400 px-1.5 hidden sm:inline">Brush</span>
+                {BRUSH_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setBrushK(opt.k)}
+                    title={`${cellsInDisk(opt.k)} cells (~${(cellsInDisk(opt.k) * H3_RES8_CELL_AREA_KM2).toFixed(1)} km²)`}
+                    className={`w-7 h-7 rounded-md font-bold transition-colors ${
+                      brushK === opt.k ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <select
               value={selectedNagarPalika}
               onChange={(e) => setSelectedNagarPalika(e.target.value)}
-              disabled={!selectedDistrict || loadingPalikas}
+              disabled={loadingPalikas}
               className="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-white border border-slate-700 focus:outline-none disabled:opacity-50"
             >
               <option value="">
-                {loadingPalikas ? 'Loading...' : selectedDistrict ? 'All nagar palikas' : 'Select a district'}
+                {loadingPalikas ? 'Loading nagar palikas...' : 'All Lucknow nagar palikas'}
               </option>
               {nagarPalikas.map((np) => (
                 <option key={np.name} value={np.name}>{np.name}</option>
@@ -497,6 +623,16 @@ function OfficerMapDashboard() {
             >
               Calculate IPI
             </button>
+            {selectionMode === 'drag' && (
+              <button
+                onClick={undoLastAction}
+                disabled={history.length === 0}
+                title="Undo last zone edit"
+                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white text-xs rounded-lg transition-colors"
+              >
+                ↺ Undo
+              </button>
+            )}
             <button
               onClick={clearZone}
               className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition-colors"
@@ -509,16 +645,16 @@ function OfficerMapDashboard() {
 
       {status && <p className="text-center text-xs font-semibold text-red-600 bg-red-50 py-1.5">{status}</p>}
 
-      <div className="max-w-7xl mx-auto w-full mt-3 px-4 flex items-center justify-between text-xs text-slate-500">
+      <div className="max-w-[1600px] mx-auto w-full mt-3 px-4 flex items-center justify-between text-xs text-slate-500">
         <span>
           Showing <strong className="text-slate-700">{incidents.length}</strong> incident
           {incidents.length === 1 ? '' : 's'}
-          {selectedDistrict ? ` in ${selectedNagarPalika || selectedDistrict}` : ''}
+          {selectedNagarPalika ? ` in ${selectedNagarPalika}` : ' in Lucknow'}
         </span>
         <div className="flex items-center gap-2">
           {hexCells.length > 0 && (
             <span className="bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-semibold">
-              Placed Hazard Zone: {hexCells.length} cells (~{(hexCells.length * 0.73).toFixed(1)} km²)
+              Placed Hazard Zone: {hexCells.length} cells (~{(hexCells.length * H3_RES8_CELL_AREA_KM2).toFixed(1)} km²)
             </span>
           )}
           {hexCells.length > 0 && (
@@ -534,7 +670,7 @@ function OfficerMapDashboard() {
       </div>
 
       {ipiResult && (
-        <div className="max-w-7xl mx-auto w-full mt-3 px-4">
+        <div className="max-w-[1600px] mx-auto w-full mt-3 px-4">
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-wrap justify-between items-center gap-6">
             <div className="flex flex-wrap gap-8">
               <div>
@@ -587,63 +723,70 @@ function OfficerMapDashboard() {
         </div>
       )}
 
-      {/* Map Section */}
-      <div className="flex-1 max-w-7xl mx-auto w-full mt-3 mb-4 px-4">
-        <div className="rounded-2xl overflow-hidden shadow-sm border border-slate-200" style={{ minHeight: '540px' }}>
-          <MapContainer center={DEFAULT_CENTER} zoom={15} style={{ height: '100%', width: '100%', minHeight: '540px' }}>
-            <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; OpenStreetMap contributors'
-            />
-            {incidents.map((incident) => (
-              <Marker
-                key={incident.id}
-                position={[incident.latitude, incident.longitude]}
-                icon={coloredIcon(CATEGORY_COLORS[incident.category] || '#9CA3AF')}
-              >
-                <Popup>
-                  <strong className="capitalize">{incident.category.replace('_', ' ')}</strong>
-                  <br />
-                  {incident.description}
-                  <br />
-                  Status: {incident.status}
-                </Popup>
-              </Marker>
-            ))}
+      <div className="flex-1 max-w-[1600px] mx-auto w-full mt-3 mb-4 px-4 flex flex-col md:flex-row gap-4">
+        <IncidentReportsPanel
+          incidents={incidents}
+          selectedId={selectedIncidentId}
+          onSelect={handleSelectIncident}
+          onAdvanceStatus={advanceIncidentStatus}
+          updatingId={updatingIncidentId}
+        />
 
-            {/* Shape Stamp Tool (outline-only hover preview + single click placement) */}
-            <ShapeStampTool
-              active={selectionMode === 'stamp'}
-              kRings={kRings}
-              onPlaceShape={handlePlaceShape}
-            />
+        <div className="flex-1 min-w-0">
+          <div className="rounded-2xl overflow-hidden shadow-sm border border-slate-200" style={{ minHeight: '540px' }}>
+            <MapContainer center={LUCKNOW_CENTER} zoom={DEFAULT_ZOOM} style={{ height: '100%', width: '100%', minHeight: '540px' }}>
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; OpenStreetMap contributors'
+              />
+              {incidents.map((incident) => (
+                <Marker
+                  key={incident.id}
+                  position={[incident.latitude, incident.longitude]}
+                  icon={coloredIcon(CATEGORY_COLORS[incident.category] || '#9CA3AF')}
+                  eventHandlers={{ click: () => handleSelectIncident(incident) }}
+                >
+                  <Popup>
+                    <strong className="capitalize">{incident.category.replace('_', ' ')}</strong>
+                    <br />
+                    {incident.description}
+                    <br />
+                    Status: {getStatusMeta(incident.status).label}
+                  </Popup>
+                </Marker>
+              ))}
 
-            {/* Advanced: Custom Shape drawer */}
-            <PolygonDrawer
-              active={selectionMode === 'polygon'}
-              points={polygonPoints}
-              setPoints={setPolygonPoints}
-            />
+              <HexZoneClickTool
+                active={selectionMode === 'drag'}
+                brushK={brushK}
+                onToggleShape={handleToggleShape}
+                onHoverCellChange={setHoverCell}
+              />
 
-            {/* Center Epicenter Marker */}
-            {centerPoint && (
-              <Marker position={centerPoint} icon={coloredIcon('#DC2626')} />
-            )}
+              <PolygonDrawer
+                active={selectionMode === 'polygon'}
+                points={polygonPoints}
+                setPoints={setPolygonPoints}
+              />
 
-            {/* Placed H3 Hexagonal Grid Overlay */}
-            <H3Overlay hexCells={hexCells} justPlaced={justPlaced} />
+              {centerPoint && (
+                <Marker position={centerPoint} icon={coloredIcon('#DC2626')} />
+              )}
 
-            <MapRecenter focus={mapFocus} />
-          </MapContainer>
+              <HoverPreviewOverlay cells={hoverCells} willRemove={hoverWillRemove} />
+              <H3Overlay hexCells={hexCells} justPlaced={justPlaced} />
+
+              <MapRecenter focus={mapFocus} />
+            </MapContainer>
+          </div>
+          <p className="text-xs text-slate-400 text-center mt-2">
+            {selectionMode === 'drag'
+              ? '🎯 Click to add hex cells to your zone — click an already-selected area to remove it. Use the brush size buttons to paint bigger or smaller patches.'
+              : '✏️ Advanced mode: click at least 3 points on the map to draw a custom irregular boundary.'}
+          </p>
         </div>
-        <p className="text-xs text-slate-400 text-center mt-2">
-          {selectionMode === 'stamp'
-            ? '🎯 Move your mouse over the map to preview the shape (outline only), then click once to stamp it in place.'
-            : '✏️ Advanced mode: click at least 3 points on the map to draw a custom irregular boundary.'}
-        </p>
       </div>
 
-      {/* Emergency Alert Modal */}
       {showSmsModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-100">
@@ -652,7 +795,7 @@ function OfficerMapDashboard() {
               <h3 className="text-lg font-bold text-slate-900">Broadcast Citizen Emergency Alert</h3>
             </div>
             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              This will send an instant SMS warning to registered citizens living inside the <strong>{hexCells.length} targeted hexagonal cells</strong> (~{(hexCells.length * 0.73).toFixed(1)} km²)
+              This will send an instant SMS warning to registered citizens living inside the <strong>{hexCells.length} targeted hexagonal cells</strong> (~{(hexCells.length * H3_RES8_CELL_AREA_KM2).toFixed(1)} km²)
               {affectedCount !== null && (
                 <> — an estimated <strong>{affectedCount} residents</strong>.</>
               )}
@@ -683,7 +826,6 @@ function OfficerMapDashboard() {
             </div>
           </div>
         </div>
-        
       )}
     </div>
   )
