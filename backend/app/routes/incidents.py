@@ -6,6 +6,8 @@ from app.services.h3_filter import get_h3_index
 
 router = APIRouter()
 
+VALID_STATUSES = {"pending", "in_progress", "resolved"}
+
 
 class IncidentCreate(BaseModel):
     category: str          # waterlogging / pothole / fallen_tree / other
@@ -14,6 +16,10 @@ class IncidentCreate(BaseModel):
     latitude: float
     longitude: float
     reported_by: str = "anonymous"
+
+
+class IncidentStatusUpdate(BaseModel):
+    status: str
 
 
 @router.post("/")
@@ -105,3 +111,36 @@ def get_incident(incident_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Incident not found")
     return row
+
+
+@router.patch("/{incident_id}")
+def update_incident_status(incident_id: int, update: IncidentStatusUpdate):
+    """
+    Officer dashboard: advance an incident's status
+    (pending -> in_progress -> resolved).
+    """
+    if update.status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{update.status}'. Must be one of {sorted(VALID_STATUSES)}",
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE incidents
+                SET status = %s
+                WHERE id = %s
+                RETURNING id, category, description, photo_url, status, reported_by, created_at, h3_index,
+                          ST_Y(location::geometry) AS latitude,
+                          ST_X(location::geometry) AS longitude
+                """,
+                (update.status, incident_id),
+            )
+            updated_row = cur.fetchone()
+
+    if not updated_row:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    return updated_row
