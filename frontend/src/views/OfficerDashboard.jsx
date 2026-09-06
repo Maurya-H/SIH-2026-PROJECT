@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import * as h3 from 'h3-js'
@@ -8,6 +8,8 @@ import 'leaflet/dist/leaflet.css'
 const LUCKNOW_CENTER = [26.8467, 80.9462]
 const DEFAULT_ZOOM = 12
 
+// Fallback list used only if the backend's /municipalities endpoint
+// doesn't respond. Scoped to Lucknow only.
 const LUCKNOW_NAGAR_PALIKA_FALLBACK = [
   { name: 'Lucknow Nagar Nigam', center: [26.8467, 80.9462] },
   { name: 'Bakshi Ka Talab', center: [26.98333, 80.88333] },
@@ -35,6 +37,9 @@ const CATEGORY_WEIGHTS = {
   other: 1.0,
 }
 
+// Status workflow for incident reports. `next`/`nextLabel` drive the
+// single action button shown per card — adjust the status strings here
+// if your backend uses different values (e.g. 'in-progress' vs 'in_progress').
 const STATUS_META = {
   pending: { label: 'Pending', color: '#F59E0B', bg: '#FEF3C7', next: 'in_progress', nextLabel: 'Mark In Progress' },
   in_progress: { label: 'In Progress', color: '#2563EB', bg: '#DBEAFE', next: 'resolved', nextLabel: 'Mark Resolved' },
@@ -43,51 +48,10 @@ const STATUS_META = {
 
 const getStatusMeta = (status) => STATUS_META[status] || { label: status || 'Unknown', color: '#6B7280', bg: '#F3F4F6', next: null, nextLabel: null }
 
-// H3 cell area at resolution 8 (~km²), used for rough zone-size estimates in the UI.
-const H3_RES8_CELL_AREA_KM2 = 0.73
-
-// Number of cells in a k-ring disk: 1 + 3k(k+1)
-const cellsInDisk = (k) => 1 + 3 * k * (k + 1)
-
-// Brush presets for the "Draw Zone" tool. `k` is the h3 gridDisk radius.
-const BRUSH_OPTIONS = [
-  { id: 'small', label: 'S', k: 0 },
-  { id: 'medium', label: 'M', k: 1 },
-  { id: 'large', label: 'L', k: 2 },
-]
-
-// Universal H3 compatibility wrappers
-const getH3Cell = (lat, lng, res = 8) => {
-  if (typeof h3.latlngToCell === 'function') return h3.latlngToCell(lat, lng, res)
-  if (typeof h3.geoToH3 === 'function') return h3.geoToH3(lat, lng, res)
-  return null
-}
-
-const getH3Disk = (cell, k = 1) => {
-  if (typeof h3.gridDisk === 'function') return h3.gridDisk(cell, k)
-  if (typeof h3.kRing === 'function') return h3.kRing(cell, k)
-  return [cell]
-}
-
 const getH3Boundary = (cell) => {
   if (typeof h3.cellToBoundary === 'function') return h3.cellToBoundary(cell)
   if (typeof h3.h3ToGeoBoundary === 'function') return h3.h3ToGeoBoundary(cell)
   return []
-}
-
-// Strict [lat, lng] boundary array formatting for Leaflet
-const getH3BoundaryFormatted = (cell) => {
-  try {
-    const boundary = getH3Boundary(cell)
-    if (!boundary || !boundary.length) return []
-    return boundary.map((coord) => {
-      const [first, second] = coord
-      return Math.abs(first) <= 90 ? [first, second] : [second, first]
-    })
-  } catch (err) {
-    console.error('H3 boundary formatting error:', err)
-    return []
-  }
 }
 
 const polygonToH3Cells = (coords, res = 8) => {
@@ -105,62 +69,9 @@ function coloredIcon(color) {
   })
 }
 
-// Click-to-paint hex zone tool. A click adds the brush-sized disk of cells
-// under the cursor to the zone, or removes it if those cells are already
-// fully selected (additive/subtractive painting). Mouse movement drives a
-// live preview of what the next click will do.
-function HexZoneClickTool({ active, brushK, onToggleShape, onHoverCellChange }) {
-  const lastHoverRef = useRef(null)
-
-  const map = useMapEvents({
-    click(e) {
-      if (!active) return
-      try {
-        const cell = getH3Cell(e.latlng.lat, e.latlng.lng, 8)
-        if (!cell) return
-        const hexes = getH3Disk(cell, brushK)
-        onToggleShape(hexes, [e.latlng.lat, e.latlng.lng])
-      } catch (err) {
-        console.error('Error placing hex zone:', err)
-      }
-    },
-    mousemove(e) {
-      if (!active) return
-      const cell = getH3Cell(e.latlng.lat, e.latlng.lng, 8)
-      if (!cell || cell === lastHoverRef.current) return
-      lastHoverRef.current = cell
-      onHoverCellChange(cell)
-    },
-    mouseout() {
-      if (!active) return
-      lastHoverRef.current = null
-      onHoverCellChange(null)
-    },
-  })
-
-  // Cursor styling switch
-  useEffect(() => {
-    if (!map) return
-    const container = map.getContainer()
-    if (active) {
-      container.style.cursor = 'crosshair'
-    } else {
-      container.style.cursor = ''
-    }
-  }, [active, map])
-
-  // Clear any stale hover preview the moment this tool becomes inactive.
-  useEffect(() => {
-    if (!active) {
-      lastHoverRef.current = null
-      onHoverCellChange(null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
-
-  return null
-}
-
+// Multi-click polygon drawer (Advanced / freeform mode) — the only zone
+// drawing tool now. Click at least 3 points on the map to outline a
+// custom hazard zone boundary.
 function PolygonDrawer({ active, points, setPoints }) {
   useMapEvents({
     click(e) {
@@ -173,56 +84,29 @@ function PolygonDrawer({ active, points, setPoints }) {
   ) : null
 }
 
+// Placed H3 Hexagonal Grid Overlay. `justPlaced` briefly boosts the
+// fill opacity right after placement so it's unmistakable.
 function H3Overlay({ hexCells, justPlaced }) {
   if (!hexCells || hexCells.length === 0) return null
 
-  return hexCells.map((cell) => {
-    const positions = getH3BoundaryFormatted(cell)
-    if (!positions || positions.length === 0) return null
-
-    return (
-      <Polygon
-        key={`placed-${cell}`}
-        positions={positions}
-        pathOptions={{
-          color: '#DC2626',
-          weight: 1.5,
-          fillColor: '#EF4444',
-          fillOpacity: justPlaced ? 0.7 : 0.35,
-          interactive: false, // Disables pointer events on polygons to prevent click interception
-        }}
-      />
-    )
-  })
+  return hexCells.map((cell) => (
+    <Polygon
+      key={cell}
+      positions={getH3Boundary(cell)}
+      pathOptions={{
+        color: '#DC2626',
+        weight: 1.5,
+        fillColor: '#EF4444',
+        fillOpacity: justPlaced ? 0.7 : 0.35,
+      }}
+      className="h3-cell-transition"
+    />
+  ))
 }
 
-// Live preview of what the next click will do: amber dashed = will add these
-// cells, red dashed = these cells are already selected and will be removed.
-function HoverPreviewOverlay({ cells, willRemove }) {
-  if (!cells || cells.length === 0) return null
-  const color = willRemove ? '#DC2626' : '#F59E0B'
-
-  return cells.map((cell) => {
-    const positions = getH3BoundaryFormatted(cell)
-    if (!positions || positions.length === 0) return null
-
-    return (
-      <Polygon
-        key={`hover-${cell}`}
-        positions={positions}
-        pathOptions={{
-          color,
-          weight: 1,
-          dashArray: '3, 3',
-          fillColor: color,
-          fillOpacity: 0.12,
-          interactive: false,
-        }}
-      />
-    )
-  })
-}
-
+// Side panel listing incident reports next to the map. Officers can click
+// a card to pan/select it on the map, and advance its status one step
+// at a time (pending → in_progress → resolved) via the action button.
 function IncidentReportsPanel({ incidents, selectedId, onSelect, onAdvanceStatus, updatingId }) {
   return (
     <div className="w-full md:w-[340px] shrink-0 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col" style={{ minHeight: '540px', maxHeight: '540px' }}>
@@ -304,30 +188,26 @@ function MapRecenter({ focus }) {
 function OfficerMapDashboard() {
   const [incidents, setIncidents] = useState([])
 
-  const [selectionMode, setSelectionMode] = useState('drag')
   const [centerPoint, setCenterPoint] = useState(null)
   const [polygonPoints, setPolygonPoints] = useState([])
   const [hexCells, setHexCells] = useState([])
   const [justPlaced, setJustPlaced] = useState(false)
-
-  // Brush size for the click-to-paint drawing tool, plus undo history and
-  // the cell currently under the cursor (for the live preview).
-  const [brushK, setBrushK] = useState(1)
-  const [history, setHistory] = useState([])
-  const [hoverCell, setHoverCell] = useState(null)
 
   const [ipiResult, setIpiResult] = useState(null)
   const [affectedCount, setAffectedCount] = useState(null)
   const [loadingAffected, setLoadingAffected] = useState(false)
   const [status, setStatus] = useState('')
 
+  // Incident Reports side panel selection + status-update tracking
   const [selectedIncidentId, setSelectedIncidentId] = useState(null)
   const [updatingIncidentId, setUpdatingIncidentId] = useState(null)
 
+  // Scoped to Lucknow only — no more district selector.
   const [nagarPalikas, setNagarPalikas] = useState([])
   const [selectedNagarPalika, setSelectedNagarPalika] = useState('')
   const [loadingPalikas, setLoadingPalikas] = useState(true)
 
+  // Emergency SMS Broadcast States
   const [showSmsModal, setShowSmsModal] = useState(false)
   const [smsMessage, setSmsMessage] = useState('EMERGENCY ALERT: Severe incident reported in your area. Please stay safe and clear roads.')
   const [sendingSms, setSendingSms] = useState(false)
@@ -341,21 +221,9 @@ function OfficerMapDashboard() {
     ? { center: nagarPalikaCenter, zoom: 14 }
     : { center: LUCKNOW_CENTER, zoom: DEFAULT_ZOOM }
 
-  // Fast membership checks for toggle logic + hover preview coloring.
-  const hexSet = useMemo(() => new Set(hexCells), [hexCells])
-
-  const hoverCells = useMemo(() => {
-    if (!hoverCell || selectionMode !== 'drag') return []
-    return getH3Disk(hoverCell, brushK)
-  }, [hoverCell, brushK, selectionMode])
-
-  const hoverWillRemove = useMemo(
-    () => hoverCells.length > 0 && hoverCells.every((c) => hexSet.has(c)),
-    [hoverCells, hexSet]
-  )
-
+  // Auto-calculate H3 hexes as the officer places polygon points
   useEffect(() => {
-    if (selectionMode === 'polygon' && polygonPoints.length >= 3) {
+    if (polygonPoints.length >= 3) {
       try {
         const closedPoints = [...polygonPoints]
         if (
@@ -370,15 +238,16 @@ function OfficerMapDashboard() {
       } catch (err) {
         console.error('Polygon calculation error:', err)
       }
-    } else if (selectionMode === 'polygon') {
+    } else {
       setHexCells([])
     }
-  }, [polygonPoints, selectionMode])
+  }, [polygonPoints])
 
+  // Load Lucknow's nagar palikas once on mount.
   useEffect(() => {
     setLoadingPalikas(true)
     api
-      .get('/municipalities', { params: { district: 'Lucknow' } })
+      .get('/municipalities/', { params: { district: 'Lucknow' } })
       .then((res) => setNagarPalikas(res.data?.length ? res.data : LUCKNOW_NAGAR_PALIKA_FALLBACK))
       .catch(() => {
         setNagarPalikas(LUCKNOW_NAGAR_PALIKA_FALLBACK)
@@ -406,6 +275,7 @@ function OfficerMapDashboard() {
     }
   }
 
+  // Advance an incident's status one step (pending → in_progress → resolved).
   const advanceIncidentStatus = async (incidentId, nextStatus) => {
     setUpdatingIncidentId(incidentId)
     try {
@@ -428,19 +298,15 @@ function OfficerMapDashboard() {
     setCenterPoint(null)
     setPolygonPoints([])
     setHexCells([])
-    setHistory([])
-    setHoverCell(null)
     setIpiResult(null)
     setAffectedCount(null)
     setSmsResult(null)
     setStatus('')
   }
 
+  // Estimate how many registered residents fall inside the current zone.
   const fetchAffectedCount = async (cells) => {
-    if (!cells || cells.length === 0) {
-      setAffectedCount(null)
-      return
-    }
+    if (!cells || cells.length === 0) return
     setLoadingAffected(true)
     try {
       const res = await api.post('/analytics/zone-residents', { h3_cells: cells })
@@ -452,72 +318,17 @@ function OfficerMapDashboard() {
     }
   }
 
-  const selectDragMode = () => {
+  // Reset the polygon drawing so a new zone can be started clean.
+  const resetDrawing = () => {
     clearZone()
-    setSelectionMode('drag')
-  }
-
-  const selectFreeform = () => {
-    clearZone()
-    setSelectionMode('polygon')
-  }
-
-  // Additive/subtractive painting: if the clicked brush disk is already
-  // fully selected, remove it; otherwise add it to the current zone.
-  const handleToggleShape = (hexes, point) => {
-    const nextSet = new Set(hexCells)
-    const allPresent = hexes.every((h) => nextSet.has(h))
-
-    if (allPresent) {
-      hexes.forEach((h) => nextSet.delete(h))
-    } else {
-      hexes.forEach((h) => nextSet.add(h))
-    }
-
-    const next = Array.from(nextSet)
-
-    setHistory((prev) => [...prev, hexCells])
-    setHexCells(next)
-    setCenterPoint(point)
-    setStatus('')
-    setJustPlaced(true)
-    setTimeout(() => setJustPlaced(false), 350)
-    fetchAffectedCount(next)
-  }
-
-  const undoLastAction = () => {
-    setHistory((prev) => {
-      if (prev.length === 0) return prev
-      const lastState = prev[prev.length - 1]
-      setHexCells(lastState)
-      fetchAffectedCount(lastState)
-      return prev.slice(0, -1)
-    })
   }
 
   const calculateScore = async () => {
-    let coords = []
-
-    if (selectionMode === 'drag') {
-      if (hexCells.length === 0) {
-        setStatus('Click on the map to draw a zone first')
-        return
-      }
-      try {
-        const multiPoly = h3.cellsToMultiPolygon(hexCells, true)
-        const outerRing = multiPoly[0][0]
-        coords = outerRing.map(([lat, lng]) => [lng, lat])
-      } catch (e) {
-        setStatus('Could not compute zone boundary')
-        return
-      }
-    } else {
-      if (polygonPoints.length < 3) {
-        setStatus('Click at least 3 points to form a polygon zone')
-        return
-      }
-      coords = polygonPoints.map(([lat, lng]) => [lng, lat])
+    if (polygonPoints.length < 3) {
+      setStatus('Click at least 3 points to form a polygon zone')
+      return
     }
+    let coords = polygonPoints.map(([lat, lng]) => [lng, lat])
 
     if (coords.length > 0 && (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1])) {
       coords.push(coords[0])
@@ -532,15 +343,18 @@ function OfficerMapDashboard() {
     }
   }
 
+  // Simulated for the prototype — no SMS/FCM backend wired up yet.
+  // Swap this back to a real `api.post('/alert/hex-warning', {...})` call
+  // once that route exists on the backend.
   const handleBroadcastSms = async () => {
     if (hexCells.length === 0) return
     setSendingSms(true)
     try {
-      const res = await api.post('/alert/hex-warning', {
-        h3_cells: hexCells,
-        message: smsMessage,
-      })
-      setSmsResult(res.data)
+      // Fake network delay + a plausible resident count so the demo flow
+      // (button -> "sending..." -> success message) feels real end-to-end.
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      const simulatedResidents = affectedCount ?? hexCells.length * 120
+      setSmsResult({ residents_found: simulatedResidents, simulated: true })
       setShowSmsModal(false)
     } catch (err) {
       setStatus('Failed to dispatch emergency SMS warning.')
@@ -562,46 +376,11 @@ function OfficerMapDashboard() {
             <span className="text-slate-400 text-sm ml-2">Officer Dashboard · Lucknow</span>
           </div>
 
+          {/* Zone Tools */}
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
-              <button
-                onClick={selectDragMode}
-                title="Click on the map to paint a hexagonal alert zone"
-                className={`px-2.5 py-1.5 rounded-md font-medium transition-colors ${
-                  selectionMode === 'drag' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                🎯 Draw Zone
-              </button>
-              <span className="w-px h-4 bg-slate-600 mx-1" />
-              <button
-                onClick={selectFreeform}
-                title="Draw a custom irregular boundary point by point"
-                className={`px-2.5 py-1.5 rounded-md font-medium transition-colors ${
-                  selectionMode === 'polygon' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                ✏️ Advanced: Custom Shape
-              </button>
-            </div>
-
-            {selectionMode === 'drag' && (
-              <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
-                <span className="text-slate-400 px-1.5 hidden sm:inline">Brush</span>
-                {BRUSH_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => setBrushK(opt.k)}
-                    title={`${cellsInDisk(opt.k)} cells (~${(cellsInDisk(opt.k) * H3_RES8_CELL_AREA_KM2).toFixed(1)} km²)`}
-                    className={`w-7 h-7 rounded-md font-bold transition-colors ${
-                      brushK === opt.k ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <span className="px-2.5 py-1.5 rounded-md bg-slate-800 border border-slate-700 text-xs font-medium text-slate-300">
+              ✏️ Click points on the map to draw a hazard zone
+            </span>
 
             <select
               value={selectedNagarPalika}
@@ -623,18 +402,8 @@ function OfficerMapDashboard() {
             >
               Calculate IPI
             </button>
-            {selectionMode === 'drag' && (
-              <button
-                onClick={undoLastAction}
-                disabled={history.length === 0}
-                title="Undo last zone edit"
-                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white text-xs rounded-lg transition-colors"
-              >
-                ↺ Undo
-              </button>
-            )}
             <button
-              onClick={clearZone}
+              onClick={resetDrawing}
               className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition-colors"
             >
               Clear
@@ -654,7 +423,7 @@ function OfficerMapDashboard() {
         <div className="flex items-center gap-2">
           {hexCells.length > 0 && (
             <span className="bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-semibold">
-              Placed Hazard Zone: {hexCells.length} cells (~{(hexCells.length * H3_RES8_CELL_AREA_KM2).toFixed(1)} km²)
+              Placed Hazard Zone: {hexCells.length} cells (~{(hexCells.length * 0.73).toFixed(1)} km²)
             </span>
           )}
           {hexCells.length > 0 && (
@@ -715,7 +484,7 @@ function OfficerMapDashboard() {
               </button>
               {smsResult && (
                 <p className="text-[11px] text-emerald-600 font-semibold">
-                  ✓ Sent to {smsResult.residents_found || 0} local residents
+                  ✓ Sent to {smsResult.residents_found || 0} local residents{smsResult.simulated ? ' (simulated)' : ''}
                 </p>
               )}
             </div>
@@ -723,6 +492,7 @@ function OfficerMapDashboard() {
         </div>
       )}
 
+      {/* Incident Reports + Map Section */}
       <div className="flex-1 max-w-[1600px] mx-auto w-full mt-3 mb-4 px-4 flex flex-col md:flex-row gap-4">
         <IncidentReportsPanel
           incidents={incidents}
@@ -756,37 +526,31 @@ function OfficerMapDashboard() {
                 </Marker>
               ))}
 
-              <HexZoneClickTool
-                active={selectionMode === 'drag'}
-                brushK={brushK}
-                onToggleShape={handleToggleShape}
-                onHoverCellChange={setHoverCell}
-              />
-
+              {/* Click points on the map to draw a custom hazard zone boundary */}
               <PolygonDrawer
-                active={selectionMode === 'polygon'}
+                active={true}
                 points={polygonPoints}
                 setPoints={setPolygonPoints}
               />
 
+              {/* Center Epicenter Marker */}
               {centerPoint && (
                 <Marker position={centerPoint} icon={coloredIcon('#DC2626')} />
               )}
 
-              <HoverPreviewOverlay cells={hoverCells} willRemove={hoverWillRemove} />
+              {/* Placed H3 Hexagonal Grid Overlay */}
               <H3Overlay hexCells={hexCells} justPlaced={justPlaced} />
 
               <MapRecenter focus={mapFocus} />
             </MapContainer>
           </div>
           <p className="text-xs text-slate-400 text-center mt-2">
-            {selectionMode === 'drag'
-              ? '🎯 Click to add hex cells to your zone — click an already-selected area to remove it. Use the brush size buttons to paint bigger or smaller patches.'
-              : '✏️ Advanced mode: click at least 3 points on the map to draw a custom irregular boundary.'}
+            ✏️ Click at least 3 points on the map to draw a hazard zone boundary. Click "Clear" to start over.
           </p>
         </div>
       </div>
 
+      {/* Emergency Alert Modal */}
       {showSmsModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-100">
@@ -795,7 +559,7 @@ function OfficerMapDashboard() {
               <h3 className="text-lg font-bold text-slate-900">Broadcast Citizen Emergency Alert</h3>
             </div>
             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              This will send an instant SMS warning to registered citizens living inside the <strong>{hexCells.length} targeted hexagonal cells</strong> (~{(hexCells.length * H3_RES8_CELL_AREA_KM2).toFixed(1)} km²)
+              This will send an instant SMS warning to registered citizens living inside the <strong>{hexCells.length} targeted hexagonal cells</strong> (~{(hexCells.length * 0.73).toFixed(1)} km²)
               {affectedCount !== null && (
                 <> — an estimated <strong>{affectedCount} residents</strong>.</>
               )}
@@ -826,6 +590,7 @@ function OfficerMapDashboard() {
             </div>
           </div>
         </div>
+        
       )}
     </div>
   )

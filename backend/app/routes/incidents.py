@@ -65,6 +65,7 @@ def list_incidents(
                 cur.execute(
                     """
                     SELECT id, category, description, photo_url, status, reported_by, created_at, h3_index,
+                           citizen_confirmed,
                            ST_Y(location::geometry) AS latitude,
                            ST_X(location::geometry) AS longitude
                     FROM incidents
@@ -81,6 +82,7 @@ def list_incidents(
                 cur.execute(
                     """
                     SELECT id, category, description, photo_url, status, reported_by, created_at, h3_index,
+                           citizen_confirmed,
                            ST_Y(location::geometry) AS latitude,
                            ST_X(location::geometry) AS longitude
                     FROM incidents
@@ -100,6 +102,7 @@ def get_incident(incident_id: int):
             cur.execute(
                 """
                 SELECT id, category, description, photo_url, status, reported_by, created_at, h3_index,
+                       citizen_confirmed,
                        ST_Y(location::geometry) AS latitude,
                        ST_X(location::geometry) AS longitude
                 FROM incidents WHERE id = %s
@@ -133,6 +136,7 @@ def update_incident_status(incident_id: int, update: IncidentStatusUpdate):
                 SET status = %s
                 WHERE id = %s
                 RETURNING id, category, description, photo_url, status, reported_by, created_at, h3_index,
+                          citizen_confirmed,
                           ST_Y(location::geometry) AS latitude,
                           ST_X(location::geometry) AS longitude
                 """,
@@ -142,5 +146,42 @@ def update_incident_status(incident_id: int, update: IncidentStatusUpdate):
 
     if not updated_row:
         raise HTTPException(status_code=404, detail="Incident not found")
+
+    return updated_row
+
+
+@router.patch("/{incident_id}/confirm")
+def confirm_incident_resolution(incident_id: int):
+    """
+    Citizen confirms that a resolved issue was actually fixed. Only
+    allowed once the officer has marked it 'resolved' — closes the loop
+    between officer action and citizen-verified outcome.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM incidents WHERE id = %s", (incident_id,))
+            existing = cur.fetchone()
+
+            if not existing:
+                raise HTTPException(status_code=404, detail="Incident not found")
+            if existing["status"] != "resolved":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only resolved incidents can be confirmed by the citizen",
+                )
+
+            cur.execute(
+                """
+                UPDATE incidents
+                SET citizen_confirmed = TRUE
+                WHERE id = %s
+                RETURNING id, category, description, photo_url, status, reported_by, created_at, h3_index,
+                          citizen_confirmed,
+                          ST_Y(location::geometry) AS latitude,
+                          ST_X(location::geometry) AS longitude
+                """,
+                (incident_id,),
+            )
+            updated_row = cur.fetchone()
 
     return updated_row
