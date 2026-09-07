@@ -411,7 +411,7 @@ function OfficerMapDashboard() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
             </span>
-            <span className="text-lg font-semibold tracking-tight">CivicTrack</span>
+            <span className="text-lg font-semibold tracking-tight">CivicIssueTrack</span>
             <span className="text-slate-400 text-sm ml-2">Officer Dashboard · Lucknow</span>
           </div>
 
