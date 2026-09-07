@@ -16,6 +16,10 @@ class IncidentCreate(BaseModel):
     latitude: float
     longitude: float
     reported_by: str = "anonymous"
+    # (Simulated) AI photo verification verdict from the citizen form, if
+    # a photo was uploaded. 'match' | 'unclear' | 'mismatch' | None.
+    ai_verdict: Optional[str] = None
+    ai_message: Optional[str] = None
 
 
 class IncidentStatusUpdate(BaseModel):
@@ -31,12 +35,13 @@ def create_incident(incident: IncidentCreate):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO incidents (category, description, photo_url, location, h3_index, status, reported_by)
-                VALUES (%s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s, 'pending', %s)
+                INSERT INTO incidents (category, description, photo_url, location, h3_index, status, reported_by, ai_verdict, ai_message)
+                VALUES (%s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s, 'pending', %s, %s, %s)
                 RETURNING id
                 """,
                 (incident.category, incident.description, incident.photo_url,
-                 incident.longitude, incident.latitude, h3_index, incident.reported_by),
+                 incident.longitude, incident.latitude, h3_index, incident.reported_by,
+                 incident.ai_verdict, incident.ai_message),
             )
             new_id = cur.fetchone()["id"]
 
@@ -65,7 +70,7 @@ def list_incidents(
                 cur.execute(
                     """
                     SELECT id, category, description, photo_url, status, reported_by, created_at, h3_index,
-                           citizen_confirmed,
+                           citizen_confirmed, ai_verdict, ai_message,
                            ST_Y(location::geometry) AS latitude,
                            ST_X(location::geometry) AS longitude
                     FROM incidents
@@ -82,7 +87,7 @@ def list_incidents(
                 cur.execute(
                     """
                     SELECT id, category, description, photo_url, status, reported_by, created_at, h3_index,
-                           citizen_confirmed,
+                           citizen_confirmed, ai_verdict, ai_message,
                            ST_Y(location::geometry) AS latitude,
                            ST_X(location::geometry) AS longitude
                     FROM incidents
@@ -102,7 +107,7 @@ def get_incident(incident_id: int):
             cur.execute(
                 """
                 SELECT id, category, description, photo_url, status, reported_by, created_at, h3_index,
-                       citizen_confirmed,
+                       citizen_confirmed, ai_verdict, ai_message,
                        ST_Y(location::geometry) AS latitude,
                        ST_X(location::geometry) AS longitude
                 FROM incidents WHERE id = %s
@@ -136,7 +141,7 @@ def update_incident_status(incident_id: int, update: IncidentStatusUpdate):
                 SET status = %s
                 WHERE id = %s
                 RETURNING id, category, description, photo_url, status, reported_by, created_at, h3_index,
-                          citizen_confirmed,
+                          citizen_confirmed, ai_verdict, ai_message,
                           ST_Y(location::geometry) AS latitude,
                           ST_X(location::geometry) AS longitude
                 """,
@@ -176,7 +181,7 @@ def confirm_incident_resolution(incident_id: int):
                 SET citizen_confirmed = TRUE
                 WHERE id = %s
                 RETURNING id, category, description, photo_url, status, reported_by, created_at, h3_index,
-                          citizen_confirmed,
+                          citizen_confirmed, ai_verdict, ai_message,
                           ST_Y(location::geometry) AS latitude,
                           ST_X(location::geometry) AS longitude
                 """,
@@ -184,4 +189,4 @@ def confirm_incident_resolution(incident_id: int):
             )
             updated_row = cur.fetchone()
 
-    return updated_row
+    return updated_row 

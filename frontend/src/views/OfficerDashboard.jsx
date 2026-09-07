@@ -48,6 +48,14 @@ const STATUS_META = {
 
 const getStatusMeta = (status) => STATUS_META[status] || { label: status || 'Unknown', color: '#6B7280', bg: '#F3F4F6', next: null, nextLabel: null }
 
+// Styling for the (simulated) AI photo verification verdict submitted
+// alongside the citizen's report, if any.
+const AI_VERDICT_META = {
+  match: { icon: '✅', color: '#15803D', bg: '#DCFCE7', label: 'AI: Match' },
+  unclear: { icon: '⚠️', color: '#B45309', bg: '#FEF3C7', label: 'AI: Unclear' },
+  mismatch: { icon: '⚠️', color: '#B91C1C', bg: '#FEE2E2', label: 'AI: Mismatch' },
+}
+
 const getH3Boundary = (cell) => {
   if (typeof h3.cellToBoundary === 'function') return h3.cellToBoundary(cell)
   if (typeof h3.h3ToGeoBoundary === 'function') return h3.h3ToGeoBoundary(cell)
@@ -107,7 +115,7 @@ function H3Overlay({ hexCells, justPlaced }) {
 // Side panel listing incident reports next to the map. Officers can click
 // a card to pan/select it on the map, and advance its status one step
 // at a time (pending → in_progress → resolved) via the action button.
-function IncidentReportsPanel({ incidents, selectedId, onSelect, onAdvanceStatus, updatingId }) {
+function IncidentReportsPanel({ incidents, selectedId, onSelect, onAdvanceStatus, updatingId, onViewPhoto }) {
   return (
     <div className="w-full md:w-[340px] shrink-0 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col" style={{ minHeight: '540px', maxHeight: '540px' }}>
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
@@ -156,6 +164,32 @@ function IncidentReportsPanel({ incidents, selectedId, onSelect, onAdvanceStatus
 
               <p className="text-xs text-slate-500 line-clamp-2 mb-2">{incident.description}</p>
 
+              {incident.ai_verdict && AI_VERDICT_META[incident.ai_verdict] && (
+                <div
+                  title={incident.ai_message || ''}
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full mb-2"
+                  style={{
+                    color: AI_VERDICT_META[incident.ai_verdict].color,
+                    backgroundColor: AI_VERDICT_META[incident.ai_verdict].bg,
+                  }}
+                >
+                  <span>{AI_VERDICT_META[incident.ai_verdict].icon}</span>
+                  {AI_VERDICT_META[incident.ai_verdict].label}
+                </div>
+              )}
+
+              {incident.photo_url && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onViewPhoto(incident.photo_url)
+                  }}
+                  className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 transition-colors mb-2 mr-2"
+                >
+                  📷 View Photo
+                </button>
+              )}
+
               {meta.next && (
                 <button
                   onClick={(e) => {
@@ -188,6 +222,10 @@ function MapRecenter({ focus }) {
 function OfficerMapDashboard() {
   const [incidents, setIncidents] = useState([])
 
+  // Once a citizen confirms an issue is actually resolved, it's fully
+  // closed — no reason to keep it on the officer's active map/list.
+  const activeIncidents = incidents.filter((i) => !i.citizen_confirmed)
+
   const [centerPoint, setCenterPoint] = useState(null)
   const [polygonPoints, setPolygonPoints] = useState([])
   const [hexCells, setHexCells] = useState([])
@@ -201,6 +239,7 @@ function OfficerMapDashboard() {
   // Incident Reports side panel selection + status-update tracking
   const [selectedIncidentId, setSelectedIncidentId] = useState(null)
   const [updatingIncidentId, setUpdatingIncidentId] = useState(null)
+  const [viewingPhotoUrl, setViewingPhotoUrl] = useState(null)
 
   // Scoped to Lucknow only — no more district selector.
   const [nagarPalikas, setNagarPalikas] = useState([])
@@ -214,7 +253,7 @@ function OfficerMapDashboard() {
   const [smsResult, setSmsResult] = useState(null)
 
   const nagarPalikaCenter = nagarPalikas.find((np) => np.name === selectedNagarPalika)?.center
-  const selectedIncident = incidents.find((i) => i.id === selectedIncidentId)
+  const selectedIncident = activeIncidents.find((i) => i.id === selectedIncidentId)
   const mapFocus = selectedIncident
     ? { center: [selectedIncident.latitude, selectedIncident.longitude], zoom: 17 }
     : nagarPalikaCenter
@@ -416,8 +455,8 @@ function OfficerMapDashboard() {
 
       <div className="max-w-[1600px] mx-auto w-full mt-3 px-4 flex items-center justify-between text-xs text-slate-500">
         <span>
-          Showing <strong className="text-slate-700">{incidents.length}</strong> incident
-          {incidents.length === 1 ? '' : 's'}
+          Showing <strong className="text-slate-700">{activeIncidents.length}</strong> incident
+          {activeIncidents.length === 1 ? '' : 's'}
           {selectedNagarPalika ? ` in ${selectedNagarPalika}` : ' in Lucknow'}
         </span>
         <div className="flex items-center gap-2">
@@ -495,11 +534,12 @@ function OfficerMapDashboard() {
       {/* Incident Reports + Map Section */}
       <div className="flex-1 max-w-[1600px] mx-auto w-full mt-3 mb-4 px-4 flex flex-col md:flex-row gap-4">
         <IncidentReportsPanel
-          incidents={incidents}
+          incidents={activeIncidents}
           selectedId={selectedIncidentId}
           onSelect={handleSelectIncident}
           onAdvanceStatus={advanceIncidentStatus}
           updatingId={updatingIncidentId}
+          onViewPhoto={setViewingPhotoUrl}
         />
 
         <div className="flex-1 min-w-0">
@@ -509,7 +549,7 @@ function OfficerMapDashboard() {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; OpenStreetMap contributors'
               />
-              {incidents.map((incident) => (
+              {activeIncidents.map((incident) => (
                 <Marker
                   key={incident.id}
                   position={[incident.latitude, incident.longitude]}
@@ -522,6 +562,12 @@ function OfficerMapDashboard() {
                     {incident.description}
                     <br />
                     Status: {getStatusMeta(incident.status).label}
+                    {incident.ai_verdict && AI_VERDICT_META[incident.ai_verdict] && (
+                      <>
+                        <br />
+                        {AI_VERDICT_META[incident.ai_verdict].icon} {AI_VERDICT_META[incident.ai_verdict].label}
+                      </>
+                    )}
                   </Popup>
                 </Marker>
               ))}
@@ -591,6 +637,29 @@ function OfficerMapDashboard() {
           </div>
         </div>
         
+      )}
+
+      {/* Photo Viewer Modal */}
+      {viewingPhotoUrl && (
+        <div
+          className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+          onClick={() => setViewingPhotoUrl(null)}
+        >
+          <div className="relative max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setViewingPhotoUrl(null)}
+              className="absolute -top-3 -right-3 w-8 h-8 flex items-center justify-center rounded-full bg-white text-slate-800 shadow-lg hover:bg-slate-100 transition-colors"
+              title="Close"
+            >
+              ✕
+            </button>
+            <img
+              src={viewingPhotoUrl}
+              alt="Incident report"
+              className="w-full max-h-[80vh] object-contain rounded-xl shadow-2xl bg-white"
+            />
+          </div>
+        </div>
       )}
     </div>
   )

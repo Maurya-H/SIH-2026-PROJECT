@@ -106,10 +106,15 @@ function AllReportsView({ refreshKey }) {
     }
   }
 
-  const filteredReports = statusFilter === 'all' ? reports : reports.filter((r) => r.status === statusFilter)
+  // Once a citizen confirms an issue is resolved, it's fully closed —
+  // drop it from the active list entirely rather than leaving it visible
+  // under the "Resolved" tab indefinitely.
+  const activeReports = reports.filter((r) => !r.citizen_confirmed)
+
+  const filteredReports = statusFilter === 'all' ? activeReports : activeReports.filter((r) => r.status === statusFilter)
 
   const countFor = (statusValue) =>
-    statusValue === 'all' ? reports.length : reports.filter((r) => r.status === statusValue).length
+    statusValue === 'all' ? activeReports.length : activeReports.filter((r) => r.status === statusValue).length
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -293,6 +298,8 @@ function ReportIncidentPage() {
         latitude: location.lat,
         longitude: location.lng,
         reported_by: CITIZEN_ID,
+        ai_verdict: aiVerification?.verdict || null,
+        ai_message: aiVerification?.message || null,
       })
       setStatus({ type: 'success', text: 'Report submitted. Thank you for helping your community.' })
       setCategory('')
@@ -411,30 +418,10 @@ function ReportIncidentPage() {
                   )}
                 </div>
 
-                {/* Simulated AI photo verification feedback */}
-                {photoPreview && !category && (
-                  <p className="text-xs text-slate-400">Select an incident type above to verify this photo.</p>
-                )}
-                {photoPreview && category && aiVerifying && (
-                  <p className="text-xs text-slate-500 flex items-center gap-1.5">
-                    <span className="inline-block w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-                    Verifying photo…
-                  </p>
-                )}
-                {photoPreview && category && !aiVerifying && aiVerification && (
-                  <p
-                    className={`text-xs font-medium ${
-                      aiVerification.verdict === 'match'
-                        ? 'text-green-600'
-                        : aiVerification.verdict === 'unclear'
-                        ? 'text-amber-600'
-                        : 'text-red-600'
-                    }`}
-                  >
-                    {aiVerification.verdict === 'match' ? '✅ ' : '⚠️ '}
-                    {aiVerification.message}
-                  </p>
-                )}
+                {/* Note: AI photo verification runs silently in the background
+                    (see the useEffect above) and is sent with the report for
+                    officer review — it's intentionally not shown to the
+                    citizen here. */}
               </div>
 
               {/* Location */}
