@@ -17,10 +17,10 @@ class PolygonRequest(BaseModel):
 def calculate_ipi(rows: list, zone_area_sq_km: float) -> float:
     weights = {
         "fire": 5.0,
-        "fallen_tree": 4.0,
-        "pipe_burst": 3.5,
-        "waterlogging": 3.0,
-        "road_blockage": 2.5,
+        "fallen_tree": 3.5,
+        "pipe_burst": 2.5,
+        "waterlogging": 4.0,
+        "road_blockage": 5.2,
         "pothole": 2.0,
         "other": 1.0,
     }
