@@ -32,6 +32,39 @@ const getStatusMeta = (status) => STATUS_META[status] || { label: status || 'Unk
 // report — swap this out once real citizen accounts/auth exist.
 const CITIZEN_ID = 'citizen_demo'
 
+// Simulated AI photo verification — no real vision model wired up yet.
+// This runs a fake pass/fail check so the UX flow (upload -> analyzing
+// -> verdict) is demoable end-to-end. Swap the body of runAiVerification
+// for a real backend call (e.g. POST /incidents/verify-photo) once a
+// vision model is available.
+const AI_VERIFICATION_DELAY_MS = 1100
+
+function runAiVerification(categoryLabel) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      // Biased random outcome so most uploads "pass" in a demo, but an
+      // occasional mismatch shows up too — purely illustrative.
+      const roll = Math.random()
+      if (roll < 0.75) {
+        resolve({
+          verdict: 'match',
+          message: `Looks consistent with a ${categoryLabel.toLowerCase()} report.`,
+        })
+      } else if (roll < 0.92) {
+        resolve({
+          verdict: 'unclear',
+          message: `Couldn't clearly confirm this shows a ${categoryLabel.toLowerCase()}. You can still submit — an officer will review it.`,
+        })
+      } else {
+        resolve({
+          verdict: 'mismatch',
+          message: `This photo doesn't look like it matches "${categoryLabel}". Double-check you picked the right incident type.`,
+        })
+      }
+    }, AI_VERIFICATION_DELAY_MS)
+  })
+}
+
 // "All Reports" tab: a public tracker of every issue reported in the
 // area, filterable by status (Pending / In Progress / Resolved).
 function AllReportsView({ refreshKey }) {
@@ -39,6 +72,7 @@ function AllReportsView({ refreshKey }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [confirmingId, setConfirmingId] = useState(null)
 
   useEffect(() => {
     fetchAllReports()
@@ -57,10 +91,30 @@ function AllReportsView({ refreshKey }) {
     }
   }
 
-  const filteredReports = statusFilter === 'all' ? reports : reports.filter((r) => r.status === statusFilter)
+  // Citizen confirms an officer-marked-resolved issue was actually fixed.
+  const confirmResolution = async (reportId) => {
+    setConfirmingId(reportId)
+    try {
+      await api.patch(`/incidents/${reportId}/confirm`)
+      setReports((prev) =>
+        prev.map((r) => (r.id === reportId ? { ...r, citizen_confirmed: true } : r))
+      )
+    } catch (err) {
+      setError('Could not confirm resolution — please try again.')
+    } finally {
+      setConfirmingId(null)
+    }
+  }
+
+  // Once a citizen confirms an issue is resolved, it's fully closed —
+  // drop it from the active list entirely rather than leaving it visible
+  // under the "Resolved" tab indefinitely.
+  const activeReports = reports.filter((r) => !r.citizen_confirmed)
+
+  const filteredReports = statusFilter === 'all' ? activeReports : activeReports.filter((r) => r.status === statusFilter)
 
   const countFor = (statusValue) =>
-    statusValue === 'all' ? reports.length : reports.filter((r) => r.status === statusValue).length
+    statusValue === 'all' ? activeReports.length : activeReports.filter((r) => r.status === statusValue).length
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -103,6 +157,9 @@ function AllReportsView({ refreshKey }) {
           {filteredReports.map((report) => {
             const meta = getStatusMeta(report.status)
             const category = CATEGORIES.find((c) => c.value === report.category)
+            const isConfirming = confirmingId === report.id
+            const showConfirmButton = report.status === 'resolved' && !report.citizen_confirmed
+
             return (
               <div key={report.id} className="py-3 flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -118,6 +175,21 @@ function AllReportsView({ refreshKey }) {
                   {report.created_at && (
                     <p className="text-[11px] text-slate-400 mt-1">
                       Submitted {new Date(report.created_at).toLocaleDateString()}
+                    </p>
+                  )}
+
+                  {showConfirmButton && (
+                    <button
+                      onClick={() => confirmResolution(report.id)}
+                      disabled={isConfirming}
+                      className="mt-2 text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white transition-colors"
+                    >
+                      {isConfirming ? 'Confirming…' : '✓ Confirm issue is resolved'}
+                    </button>
+                  )}
+                  {report.status === 'resolved' && report.citizen_confirmed && (
+                    <p className="mt-2 text-[11px] font-semibold text-emerald-600">
+                      ✓ You confirmed this is resolved
                     </p>
                   )}
                 </div>
@@ -147,9 +219,36 @@ function ReportIncidentPage() {
   const [submitting, setSubmitting] = useState(false)
   const fileInputRef = useRef(null)
 
+  // Simulated AI photo verification state
+  const [aiVerifying, setAiVerifying] = useState(false)
+  const [aiVerification, setAiVerification] = useState(null) // { verdict, message }
+
   // Bumped after a successful submission so "My Reports" refetches and
   // shows the new report immediately if the citizen switches tabs.
   const [reportsRefreshKey, setReportsRefreshKey] = useState(0)
+
+  // Re-run the simulated AI check whenever there's both a photo and a
+  // selected category (verification needs to know what it's checking
+  // the photo against).
+  useEffect(() => {
+    if (!photoPreview || !category) {
+      setAiVerification(null)
+      return
+    }
+    let cancelled = false
+    const categoryLabel = CATEGORIES.find((c) => c.value === category)?.label || category
+    setAiVerifying(true)
+    setAiVerification(null)
+    runAiVerification(categoryLabel).then((result) => {
+      if (!cancelled) {
+        setAiVerification(result)
+        setAiVerifying(false)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [photoPreview, category])
 
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0]
@@ -161,6 +260,8 @@ function ReportIncidentPage() {
 
   const handleRemovePhoto = () => {
     setPhotoPreview(null)
+    setAiVerification(null)
+    setAiVerifying(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -197,12 +298,15 @@ function ReportIncidentPage() {
         latitude: location.lat,
         longitude: location.lng,
         reported_by: CITIZEN_ID,
+        ai_verdict: aiVerification?.verdict || null,
+        ai_message: aiVerification?.message || null,
       })
       setStatus({ type: 'success', text: 'Report submitted. Thank you for helping your community.' })
       setCategory('')
       setDescription('')
       setPhotoPreview(null)
       setLocation(null)
+      setAiVerification(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
       setReportsRefreshKey((k) => k + 1)
     } catch (err) {
@@ -313,6 +417,11 @@ function ReportIncidentPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Note: AI photo verification runs silently in the background
+                    (see the useEffect above) and is sent with the report for
+                    officer review — it's intentionally not shown to the
+                    citizen here. */}
               </div>
 
               {/* Location */}
