@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import incidents, auth, analytics, municipalities, health   # add health
+from app.routes import incidents, auth, analytics, municipalities
 from app.db import close_pool
 
 app = FastAPI(title="SIH 2026 - Civic Issue Tracker")
@@ -19,7 +19,6 @@ app.add_middleware(
 )
 
 # Register routes
-app.include_router(health.router, tags=["Health"])   # add this line
 app.include_router(incidents.router, prefix="/incidents", tags=["Incidents"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
